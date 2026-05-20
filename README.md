@@ -10,3 +10,5 @@ Seeing as it is very much AI assisted, the code may be messy, poorly constructed
 Technical details provided in this repository are a summary, or are assumed technical details, and should not be relied upon. Always check primary sources.
 
 Happy to take constructive comments on features that may be useful. Its something that I've found saves me time and avoids the need for multiple tools and steps in getting graphics onto the Sam.
+
+<img width="1910" height="902" alt="image" src="https://github.com/user-attachments/assets/85441f19-64f6-4643-8a4e-4b72cce09dab" />
