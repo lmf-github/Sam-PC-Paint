@@ -1,7 +1,7 @@
 Web screen editor to assist / reduce workflow in generating Sam Coupe SCREEN$ files. 
 Allows you to open, edit and save MODE 1,2,3 or MODE 4 SCREEN$.
 
-    -Can open, load and save directly to Sam disk.
+    -Can open, load and save directly to Sam disk images.
     -Allows additon of Line interupts.
     -Allows conversion of existing BMP, allowing for inclusion of line interupts to increase colour count.
 
