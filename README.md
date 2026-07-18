@@ -23,7 +23,8 @@ browser.
 - **MGT/DSK disk browser** — load and save SCREEN$ files directly to disk images
 - **Sprite Editor mode** — configurable grid overlay, animation preview
 - **Gamesmaster sprite format** — import and export `.s` sprite files, save to disk
-- **Two independent screen buffers** — copy/paste between them
+- **Two independent screen buffers** — copy/paste between them; each tracks its own filename,
+  shown beside the screen tabs
 - **Undo/redo** — 80 steps per screen
 
 ---
@@ -31,17 +32,15 @@ browser.
 ## Repository Layout
 
 ```
-sam-coupe-editor/
+Sam-PC-Paint/
 ├── index.html              ← Complete self-contained editor (single file)
 ├── README.md               ← This file
-├── docs/
-│   ├── TECHNICAL.md        ← SAM Coupé hardware reference (screen modes, palette, SCREEN$)
-│   ├── MODE4_FORMAT.md     ← Detailed Mode 4 byte-level format reference
-│   ├── USER_GUIDE.md       ← End-user guide
-│   └── HANDOFF.md          ← Developer handoff: architecture, known issues, roadmap
-└── test-assets/
-│   ├── test-mode4.ss4      ← Sample Mode 4 SCREEN$ file for testing import
-│   └── bird.s              ← Sample Gamesmaster sprite file
+├── LICENCE                 ← MIT licence
+└── docs/
+    ├── TECHNICAL.md        ← SAM Coupé hardware reference (screen modes, palette, SCREEN$)
+    ├── MODE4_FORMAT.md     ← Detailed Mode 4 byte-level format reference
+    ├── USER_GUIDE.md       ← End-user guide
+    └── HANDOFF.md          ← Developer handoff: architecture, known issues, roadmap
 ```
 
 ---
@@ -49,11 +48,11 @@ sam-coupe-editor/
 ## Quick Start
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/sam-coupe-editor
-cd sam-coupe-editor
+git clone https://github.com/lmf-github/Sam-PC-Paint
+cd Sam-PC-Paint
+start index.html         # Windows
 open index.html          # macOS
 xdg-open index.html      # Linux
-start index.html         # Windows
 ```
 
 Or just drag `index.html` into a browser window.
@@ -74,12 +73,21 @@ Tested in Chrome 120+, Firefox 121+, Safari 17+. Requires:
 The entire application is a single `index.html` file containing inline CSS and JavaScript.
 This was a deliberate choice for portability — no build toolchain, no npm, no bundler.
 
-When editing:
-1. Make changes to `index.html`
-2. Syntax-check the JS: `node --check index.html` won't work directly; extract the script
-   block first: `python3 -c "import re,sys; c=open('index.html').read(); js=re.search(r'<script>(.*?)</script>',c,re.DOTALL).group(1); open('/tmp/check.js','w').write(js)"` then `node --check /tmp/check.js`
-3. Test in browser
-4. Commit
+The workflow is: edit `index.html`, test in a browser, commit.
+
+`node --check` cannot read `index.html` directly. To syntax-check the JavaScript, extract the
+script block to a temporary file first:
+
+```bash
+python3 -c "import re; open('/tmp/check.js','w').write(re.search(r'<script>(.*?)</script>', open('index.html').read(), re.DOTALL).group(1))"
+node --check /tmp/check.js
+```
+
+This is optional — it needs both Python and Node installed, and neither is required to run or
+develop the editor. Loading the page and watching the browser console catches the same errors.
+
+See [docs/HANDOFF.md](docs/HANDOFF.md) for the architecture, the SAM hardware details the
+implementation depends on, known issues, and a testing checklist.
 
 ---
 
