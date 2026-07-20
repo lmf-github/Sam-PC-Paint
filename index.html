@@ -210,7 +210,7 @@ body {
 
 /* ── RIGHT PANEL ── */
 #right-panel {
-  width: 200px;
+  width: 340px;
   background: var(--bg2);
   border-left: 1px solid var(--border);
   display: flex;
@@ -294,8 +294,9 @@ body {
 
 /* Magnifier */
 #mag-canvas {
-  width: 160px !important;
-  height: 160px !important;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  height: auto;
   image-rendering: pixelated;
   border: 1px solid var(--border2);
   border-radius: 4px;
@@ -2035,14 +2036,16 @@ function renderClutIndicator() {
   const slots = (mode === 1 || mode === 2) ? 16 : (mode === 3 ? 4 : 16);
   const indW  = slots * 2;
 
-  // Resize if needed
+  // Resize internal buffer only when the slot count / height changes...
   if (clutIndCanvas.width !== indW || clutIndCanvas.height !== screenH) {
     clutIndCanvas.width  = indW;
     clutIndCanvas.height = screenH;
-    clutIndCanvas.style.width  = (indW * zoom) + 'px';
-    clutIndCanvas.style.height = (screenH * zoom) + 'px';
-    clutIndCanvas.style.left   = (screenW * zoom) + 'px';
   }
+  // ...but always refresh the CSS size/position so the strip tracks the zoom level
+  // and stays glued to the canvas's right edge.
+  clutIndCanvas.style.width  = (indW * zoom) + 'px';
+  clutIndCanvas.style.height = (screenH * zoom) + 'px';
+  clutIndCanvas.style.left   = (screenW * zoom) + 'px';
 
   // Build per-scan-line palette state (same logic as renderFull)
   const sortedLI = [...lineInterrupts].sort((a, b) => a.line - b.line);
@@ -2079,12 +2082,9 @@ function renderClutIndicator() {
     }
   }
 
-  // Draw slot number labels at the top (1px font is tiny — draw as thin lines instead)
-  // Draw a subtle separator between each slot column
-  ictx.fillStyle = 'rgba(0,0,0,0.3)';
-  for (let slot = 1; slot < slots; slot++) {
-    ictx.fillRect(slot * 2, 0, 1, screenH);
-  }
+  // No column separators: each slot is only 2px wide, so a 1px separator would
+  // darken half of every bar and read as an extra "in-between" colour. The 16
+  // distinct colours (and the numbered CLUT panel) delineate the slots on their own.
 }
 
 // Attribute-based rendering for modes 1 and 2
@@ -2191,20 +2191,29 @@ function updateMagnifier(cx, cy) {
   const slots = mode === 3 ? 4 : 16;
   const sortedLI = [...lineInterrupts].sort((a, b) => a.line - b.line);
   for (let dy = -HALF; dy < HALF; dy++) {
-    const py = Math.max(0, Math.min(screenH - 1, cy + dy));
+    const rawY = cy + dy;
+    const yOut = rawY < 0 || rawY >= screenH;
+    const py   = yOut ? 0 : rawY;
     const linePal = new Uint8Array(slots);
     const _ap1 = activePal(); for (let i = 0; i < slots; i++) linePal[i] = _ap1[i];
-    for (const li of sortedLI) { if (li.line < py && li.slot < slots) linePal[li.slot] = li.palIdx; }
+    if (!yOut) for (const li of sortedLI) { if (li.line < py && li.slot < slots) linePal[li.slot] = li.palIdx; }
     for (let dx = -HALF; dx < HALF; dx++) {
-      const px = Math.max(0, Math.min(screenW - 1, cx + dx));
+      const rawX  = cx + dx;
+      const cellX = (dx + HALF) * CELL, cellY = (dy + HALF) * CELL;
+      // Off-canvas cells: paint neutral rather than smearing the clamped edge pixel
+      if (yOut || rawX < 0 || rawX >= screenW) {
+        mctx.fillStyle = '#141414';
+        mctx.fillRect(cellX, cellY, CELL, CELL);
+        continue;
+      }
       let palIdx;
       if (mode === 1 || mode === 2) {
-        palIdx = attrPixelToClut(px, py, pixelBuf[py * 256 + px]);
+        palIdx = attrPixelToClut(rawX, py, pixelBuf[py * 256 + rawX]);
       } else {
-        palIdx = linePal[Math.min(pixelBuf[py * screenW + px], slots - 1)];
+        palIdx = linePal[Math.min(pixelBuf[py * screenW + rawX], slots - 1)];
       }
       mctx.fillStyle = palToCSS(palIdx);
-      mctx.fillRect((dx + HALF) * CELL, (dy + HALF) * CELL, CELL, CELL);
+      mctx.fillRect(cellX, cellY, CELL, CELL);
     }
   }
   mctx.strokeStyle = 'rgba(255,255,255,0.15)'; mctx.lineWidth = 0.5; mctx.beginPath();
