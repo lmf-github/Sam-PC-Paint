@@ -3339,6 +3339,11 @@ function drawDragPreview() {
 let isDrawing = false;
 let drawSlot  = 0;   // colour slot captured at mousedown, used for entire drag
 let lastX = 0, lastY = 0;
+// Pencil H/V direction lock: armed while the left button is held with the pencil.
+// The axis is chosen from the first movement and held until the button releases.
+let penLock = false;
+let penLockAxis = null;              // 'h' | 'v' | null (not yet determined)
+let penOriginX = 0, penOriginY = 0;  // stroke start, defines the locked row/column
 
 function canvasPosFromEvent(e) {
   const r = mainCanvas.getBoundingClientRect();
@@ -3358,6 +3363,7 @@ function setupEvents() {
   document.addEventListener('keydown', onKeyDown);
   document.getElementById('file-input').addEventListener('change', onFileChange);
   document.getElementById('gm-input').addEventListener('change', onGMFileChange);
+  applyToolCursor();   // show the default tool's cursor immediately
 }
 
 function onMouseDown(e) {
@@ -3418,6 +3424,11 @@ function onMouseDown(e) {
   isDrawing = true;
   lastX = x; lastY = y;
 
+  // Arm the pencil direction lock for a left-button drag
+  penLock = (currentTool === 'pencil' && e.button === 0);
+  penLockAxis = null;
+  penOriginX = x; penOriginY = y;
+
   if (currentTool === 'pencil') { drawBrush(x, y, slot, 1); }
   else if (currentTool === 'brush') { drawBrush(x, y, slot, brushSize); }
   else if (currentTool === 'eraser') { drawBrush(x, y, bgColor, brushSize); }
@@ -3461,8 +3472,20 @@ function onMouseMove(e) {
   const slot = drawSlot;   // use colour captured at mousedown — e.button is unreliable during drag
 
   if (currentTool === 'pencil') {
-    drawLine(lastX, lastY, x, y, slot, 1);
-  } else if (currentTool === 'brush') {
+    let lx = x, ly = y;
+    if (penLock) {
+      if (penLockAxis === null) {
+        const adx = Math.abs(x - penOriginX), ady = Math.abs(y - penOriginY);
+        if (adx > 0 || ady > 0) penLockAxis = (adx >= ady) ? 'h' : 'v';
+      }
+      if      (penLockAxis === 'h') ly = penOriginY;   // horizontal: hold the start row
+      else if (penLockAxis === 'v') lx = penOriginX;   // vertical: hold the start column
+    }
+    drawLine(lastX, lastY, lx, ly, slot, 1);
+    lastX = lx; lastY = ly;
+    return;
+  }
+  if (currentTool === 'brush') {
     drawLine(lastX, lastY, x, y, slot, brushSize);
   } else if (currentTool === 'eraser') {
     drawLine(lastX, lastY, x, y, bgColor, brushSize);
@@ -3488,6 +3511,7 @@ function onMouseUp(e) {
   if (clipActive) return;
   if (!isDrawing) return;
   isDrawing = false;
+  penLock = false; penLockAxis = null;   // release the pencil direction lock
   const slot = drawSlot;   // use colour captured at mousedown
 
   if (dragStart) {
@@ -3510,6 +3534,7 @@ function onMouseUp(e) {
 
 function onMouseLeave() {
   isDrawing = false;
+  penLock = false; penLockAxis = null;
   dragStart = null; dragEnd = null;
 }
 
@@ -3569,6 +3594,28 @@ function updateStatus(x, y) {
 // ════════════════════════════════════════════════════════
 // TOOL SELECTION
 // ════════════════════════════════════════════════════════
+// ── Per-tool mouse cursors ────────────────────────────────
+// Custom SVG cursors so the active tool is obvious at a glance (e.g. so flood
+// fill is never mistaken for the pencil). Shapes use the named crosshair.
+function svgCursor(svg, hx, hy) {
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") ${hx} ${hy}, crosshair`;
+}
+const _CUR_PENCIL = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M3 21l1-4L16 5l3 3L8 20z" fill="#ffd23f" stroke="#000" stroke-width="1.5" stroke-linejoin="round"/><path d="M3 21l1-4 3 3z" fill="#333"/><path d="M14 7l3 3" stroke="#000" stroke-width="1.5"/></svg>';
+const _CUR_BRUSH  = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><circle cx="12" cy="12" r="6" fill="#8bd450" stroke="#000" stroke-width="1.5"/><circle cx="12" cy="12" r="1.5" fill="#000"/></svg>';
+const _CUR_FILL   = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><g stroke="#000" stroke-width="1.5" stroke-linejoin="round"><path d="M10 3l10 10-7 7-9-9z" fill="#4da6ff"/><path d="M20 13c2 2.5 2 4.5 0 6" fill="none"/></g><circle cx="4.5" cy="20" r="2" fill="#4da6ff" stroke="#000" stroke-width="1"/></svg>';
+const _CUR_ERASER = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><rect x="5" y="5" width="14" height="14" fill="#fff" stroke="#000" stroke-width="1.6"/></svg>';
+const _CUR_PICK   = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M3 21l1-4 9-9 3 3-9 9z" fill="#fff" stroke="#000" stroke-width="1.4" stroke-linejoin="round"/><rect x="12.5" y="2" width="6" height="4" rx="1.5" transform="rotate(45 15.5 4)" fill="#bbb" stroke="#000" stroke-width="1.2"/><path d="M3 21l1-4 3 3z" fill="#333"/></svg>';
+const TOOL_CURSORS = {
+  pencil: svgCursor(_CUR_PENCIL, 3, 21),
+  brush:  svgCursor(_CUR_BRUSH, 12, 12),
+  eraser: svgCursor(_CUR_ERASER, 12, 12),
+  fill:   svgCursor(_CUR_FILL, 4, 20),
+  pick:   svgCursor(_CUR_PICK, 3, 21),
+  text:   'text',
+};
+function toolCursor(name)   { return TOOL_CURSORS[name] || 'crosshair'; }
+function applyToolCursor()  { mainCanvas.style.cursor = toolCursor(currentTool); }
+
 function setTool(name) {
   currentTool = name;
   document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
@@ -3604,8 +3651,8 @@ function setTool(name) {
     document.getElementById('sel-toolbar').classList.remove('visible');
     document.getElementById('rotate-panel').classList.remove('visible');
     document.getElementById('clip-hint').classList.remove('visible');
-    mainCanvas.style.cursor = 'crosshair';
   }
+  applyToolCursor();
 }
 
 // ════════════════════════════════════════════════════════
@@ -4239,6 +4286,14 @@ function doImport(buf, detectedMode, filename) {
   setTimeout(() => { st.textContent = orig; st.style.color = ''; }, 3000);
 }
 
+// Base name (no extension) for exports — defaults to the active screen's
+// loaded/saved filename so Export reuses the name shown by the screen tabs.
+function exportBaseName() {
+  const n = S().filename;
+  if (!n) return 'screen';
+  return n.replace(/\.[^.]*$/, '') || 'screen';
+}
+
 function exportScreen() {
   if (mode === 1) { exportMode1(); return; }
   if (mode === 2) { exportMode2(); return; }
@@ -4305,7 +4360,7 @@ function exportScreen() {
 
   const blob = new Blob([out], { type: 'application/octet-stream' });
   const ext = mode === 3 ? 'ss3' : 'ss4';
-  downloadBlob(blob, `screen.${ext}`);
+  downloadBlob(blob, `${exportBaseName()}.${ext}`);
 }
 
 function exportMode1() {
@@ -4328,7 +4383,7 @@ function exportMode1() {
   for (let i = 0; i < 768; i++) out[6144 + i] = attrBuf[i];
 
   writePaletteAndLI(out, 6912);
-  downloadBlob(new Blob([out], { type: 'application/octet-stream' }), 'screen.ss1');
+  downloadBlob(new Blob([out], { type: 'application/octet-stream' }), `${exportBaseName()}.ss1`);
 }
 
 function exportMode2() {
@@ -4351,7 +4406,7 @@ function exportMode2() {
   for (let i = 0; i < 6144; i++) out[8192 + i] = attrBuf[i];
 
   writePaletteAndLI(out, 14336);
-  downloadBlob(new Blob([out], { type: 'application/octet-stream' }), 'screen.ss2');
+  downloadBlob(new Blob([out], { type: 'application/octet-stream' }), `${exportBaseName()}.ss2`);
 }
 
 // Write the 40-byte palette block and LI records at the given offset
@@ -4397,7 +4452,7 @@ function exportPNG() {
     }
   }
   offCtx.putImageData(imgData, 0, 0);
-  offCanvas.toBlob(blob => downloadBlob(blob, `screen_m${mode}.png`));
+  offCanvas.toBlob(blob => downloadBlob(blob, `${exportBaseName()}.png`));
 }
 
 function downloadBlob(blob, name) {
