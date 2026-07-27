@@ -549,6 +549,26 @@ body {
 .rot-btn.commit { border-color: var(--green); color: var(--green); }
 .rot-btn.commit:hover { background: rgba(105,240,174,0.1); }
 .rot-sep { width: 1px; height: 14px; background: var(--border); margin: 0 2px; }
+#scale-panel {
+  display: none;
+  position: absolute;
+  z-index: 49;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  padding: 6px 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+}
+#scale-panel.visible { display: block; }
+.scale-lbl {
+  font-family: var(--font-ui); font-size: 11px; color: var(--text2);
+  display: inline-flex; align-items: center; gap: 3px;
+}
+.scale-lbl input {
+  width: 46px; font-family: var(--font-mono); font-size: 11px;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 3px; padding: 2px 4px;
+}
 #clip-hint {
   display: none;
   position: absolute;
@@ -856,7 +876,11 @@ body {
         <div class="sel-sep"></div>
         <button class="sel-btn copy" onclick="copyClip(true)"       title="Copy with BG colour as transparent mask">⧉ Mask</button>
         <div class="sel-sep"></div>
+        <button class="sel-btn"      onclick="swapFgBgInSelection()" title="Swap FG and BG colours within the selection">⇄ FG/BG</button>
+        <div class="sel-sep"></div>
         <button class="sel-btn rotate-toggle" onclick="toggleRotatePanel()" title="Rotate selection">↻ Rotate</button>
+        <div class="sel-sep"></div>
+        <button class="sel-btn scale-toggle" onclick="toggleScalePanel()" title="Scale selection">⤢ Scale</button>
         <div class="sel-sep"></div>
         <button class="sel-btn"      onclick="clearSel()"           title="Escape">✕</button>
       </div>
@@ -873,6 +897,18 @@ body {
           <button class="rot-btn"        onclick="cancelRotate()" title="Cancel">✕</button>
         </div>
         <div style="font-size:9px;color:var(--text3);margin-top:3px;">↑/↓ keys adjust · BG colour fills gaps</div>
+      </div>
+      <!-- Scale panel — shown inline below sel-toolbar -->
+      <div id="scale-panel">
+        <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;">
+          <label class="scale-lbl">X <input id="scale-x" type="number" value="100" min="1" max="800" step="5">%</label>
+          <label class="scale-lbl">Y <input id="scale-y" type="number" value="100" min="1" max="800" step="5">%</label>
+          <button class="rot-btn" onclick="linkScaleXY()" id="scale-link" title="Copy X into Y (keep square)">=</button>
+          <div class="rot-sep"></div>
+          <button class="rot-btn commit" onclick="applyScale()" title="Scale the selection">Go</button>
+          <button class="rot-btn"        onclick="cancelScale()" title="Cancel">✕</button>
+        </div>
+        <div style="font-size:9px;color:var(--text3);margin-top:3px;">100% = original · scaled copy floats — click to place · Esc to finish</div>
       </div>
       <!-- Paste mode hint -->
       <div id="clip-hint">Click to paste · Esc to cancel</div>
@@ -2987,6 +3023,7 @@ function clearSel() {
   rotAngle = 0;
   document.getElementById('sel-toolbar').classList.remove('visible');
   document.getElementById('rotate-panel').classList.remove('visible');
+  document.getElementById('scale-panel').classList.remove('visible');
   document.getElementById('clip-hint').classList.remove('visible');
   mainCanvas.style.cursor = 'crosshair';
   cctx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
@@ -3132,6 +3169,7 @@ function toggleRotatePanel() {
 
 function openRotatePanel() {
   if (!selActive || !selBuffer) return;
+  document.getElementById('scale-panel').classList.remove('visible');
   rotAngle = 0;
   // Take a clean snapshot of the selection before any preview changes
   rotPreviewBuf = {
@@ -3225,6 +3263,113 @@ function cancelRotate() {
   }
   rotAngle = 0;
   document.getElementById('rotate-panel').classList.remove('visible');
+}
+
+// ── Swap FG and BG colours within the selection ───────────
+function swapFgBgInSelection() {
+  if (!selActive || !selBuffer) return;
+  if (fgColor === bgColor) return;
+  pushUndo();
+  const b = getSelBounds();
+  if (mode === 1 || mode === 2) {
+    // Attribute modes: swap ink and paper in each covered cell (cell-granular).
+    // fgColor/bgColor aren't pixel values here, so exchange the cell's two colours.
+    const rh  = mode === 1 ? 8 : 1;
+    const cx1 = Math.floor(b.x1/8),  cx2 = Math.floor(b.x2/8);
+    const cy1 = Math.floor(b.y1/rh), cy2 = Math.floor(b.y2/rh);
+    for (let cy = cy1; cy <= cy2; cy++)
+      for (let cx = cx1; cx <= cx2; cx++) {
+        const i = cy*32+cx, a = attrBuf[i];
+        const ink = a & 7, paper = (a>>3)&7;
+        attrBuf[i] = (a & 0xC0) | (ink << 3) | paper;   // keep FLASH/BRIGHT, swap ink<->paper
+      }
+  } else {
+    // M3/M4: pixel values are CLUT slots — swap the two slots directly
+    for (let y = b.y1; y <= b.y2; y++)
+      for (let x = b.x1; x <= b.x2; x++) {
+        const i = y*screenW+x, v = pixelBuf[i];
+        if      (v === fgColor) pixelBuf[i] = bgColor;
+        else if (v === bgColor) pixelBuf[i] = fgColor;
+      }
+  }
+  renderFull();
+  snapSelection();   // keep the snapshot in sync for later copy/rotate/scale
+  drawSelBox();
+}
+
+// ── Scale the selection ───────────────────────────────────
+// Produces a nearest-neighbour scaled copy (no colour blending, so it stays
+// within the CLUT) and hands it to paste mode as a floating, movable selection.
+function toggleScalePanel() {
+  const sp = document.getElementById('scale-panel');
+  if (sp.classList.contains('visible')) cancelScale();
+  else openScalePanel();
+}
+
+function openScalePanel() {
+  if (!selActive || !selBuffer) return;
+  if (document.getElementById('rotate-panel').classList.contains('visible')) cancelRotate();
+  positionScalePanel();
+  document.getElementById('scale-panel').classList.add('visible');
+}
+
+function positionScalePanel() {
+  const sp = document.getElementById('scale-panel');
+  const tb = document.getElementById('sel-toolbar');
+  const tbTop  = parseInt(tb.style.top  || 0);
+  const tbLeft = parseInt(tb.style.left || 0);
+  sp.style.left = tbLeft + 'px';
+  sp.style.top  = (tbTop + tb.offsetHeight + 4) + 'px';
+}
+
+function linkScaleXY() {
+  document.getElementById('scale-y').value = document.getElementById('scale-x').value;
+}
+
+function applyScale() {
+  if (!selActive || !selBuffer) return;
+  const sx = parseFloat(document.getElementById('scale-x').value) / 100;
+  const sy = parseFloat(document.getElementById('scale-y').value) / 100;
+  if (!(sx > 0) || !(sy > 0)) { alert('Enter positive X and Y scale percentages.'); return; }
+  const src  = selBuffer;
+  const newW = Math.max(1, Math.round(src.w * sx));
+  const newH = Math.max(1, Math.round(src.h * sy));
+  if ((newW > screenW * 2 || newH > screenH * 2) &&
+      !confirm(`Scaled size is ${newW}×${newH}px — larger than the screen. Continue?`)) return;
+
+  // Nearest-neighbour resample of the pixel data
+  const nd = new Uint8Array(newW * newH);
+  for (let y = 0; y < newH; y++) {
+    const syi = Math.min(src.h - 1, Math.floor(y * src.h / newH));
+    for (let x = 0; x < newW; x++) {
+      const sxi = Math.min(src.w - 1, Math.floor(x * src.w / newW));
+      nd[y * newW + x] = src.data[syi * src.w + sxi];
+    }
+  }
+  const nb = { w: newW, h: newH, data: nd, offX: src.offX, offY: src.offY, maskColor: -1 };
+
+  // Attribute modes: resample the cell grid to match the new pixel dimensions
+  if ((mode === 1 || mode === 2) && src.attr) {
+    const rh  = mode === 1 ? 8 : 1;
+    const naw = Math.ceil(newW / 8), nah = Math.ceil(newH / rh);
+    const na  = new Uint8Array(naw * nah);
+    for (let ay = 0; ay < nah; ay++) {
+      const say = Math.min(src.ah - 1, Math.floor(ay * src.ah / nah));
+      for (let ax = 0; ax < naw; ax++) {
+        const sax = Math.min(src.aw - 1, Math.floor(ax * src.aw / naw));
+        na[ay * naw + ax] = src.attr[say * src.aw + sax];
+      }
+    }
+    nb.attr = na; nb.aw = naw; nb.ah = nah; nb.acx = src.acx; nb.acy = src.acy;
+  }
+
+  document.getElementById('scale-panel').classList.remove('visible');
+  selBuffer = nb;
+  enterPasteMode();   // floats under the cursor; click to place, Esc to finish
+}
+
+function cancelScale() {
+  document.getElementById('scale-panel').classList.remove('visible');
 }
 
 // ════════════════════════════════════════════════════════
@@ -3438,6 +3583,8 @@ function onMouseDown(e) {
     if (currentTool === 'select') {
       selActive = false;
       document.getElementById('sel-toolbar').classList.remove('visible');
+      document.getElementById('rotate-panel').classList.remove('visible');
+      document.getElementById('scale-panel').classList.remove('visible');
       cctx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
     }
     dragStart = {x, y}; dragEnd = {x, y};
@@ -3574,6 +3721,7 @@ function onKeyDown(e) {
     renderRegion(b.x1, b.y1, b.x2 + 1, b.y2 + 1);
     document.getElementById('sel-toolbar').classList.remove('visible');
     document.getElementById('rotate-panel').classList.remove('visible');
+    document.getElementById('scale-panel').classList.remove('visible');
     selActive = false;
   }
   if (k === 'escape') {
@@ -3650,6 +3798,7 @@ function setTool(name) {
     cctx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
     document.getElementById('sel-toolbar').classList.remove('visible');
     document.getElementById('rotate-panel').classList.remove('visible');
+    document.getElementById('scale-panel').classList.remove('visible');
     document.getElementById('clip-hint').classList.remove('visible');
   }
   applyToolCursor();
