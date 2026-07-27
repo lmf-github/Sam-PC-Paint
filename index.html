@@ -6355,6 +6355,10 @@ function setScreenFilename(name) {
 
 function switchScreen(idx) {
   if (idx === activeScreenIdx) return;
+  // A floating paste (after Copy/Cut/Mask/Scale) carries over to the other
+  // screen so it can be placed there. selBuffer is global, so it survives; we
+  // just re-arm paste mode on the new screen below.
+  const keepPaste = clipActive && !!selBuffer;
   // Save current tool-in-progress state cleanly
   if (clipActive) exitPasteMode();
   if (multiClick) { multiClick = null; cctx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height); }
@@ -6385,6 +6389,10 @@ function switchScreen(idx) {
   const slots = mode === 3 ? 4 : 16;
   const ct = document.getElementById('clut-title');
   if (ct) ct.textContent = `Active CLUT (${slots} slots)`;
+
+  // Re-arm the carried-over paste on this screen. The clip renders with the new
+  // screen's CLUT, so slot values map to its palette (appearance may change).
+  if (keepPaste) enterPasteMode();
 }
 
 function copyScreenTo(targetIdx) {
