@@ -569,6 +569,32 @@ body {
   background: var(--bg); color: var(--text);
   border: 1px solid var(--border); border-radius: 3px; padding: 2px 4px;
 }
+#adjust-panel {
+  display: none;
+  position: fixed;
+  top: 46px; right: 12px;
+  z-index: 150;
+  width: 250px;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  padding: 12px 14px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+}
+#adjust-panel.visible { display: block; }
+#adjust-panel .adj-title { font-size: 13px; font-weight: 600; color: var(--accent); margin-bottom: 2px; }
+#adjust-panel .adj-sub   { font-size: 10px; color: var(--text3); margin-bottom: 10px; line-height: 1.4; }
+.adj-row {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 7px;
+  font-size: 11px; color: var(--text2); font-family: var(--font-ui);
+}
+.adj-row > span:first-child { width: 68px; flex-shrink: 0; }
+.adj-row input[type=range] { flex: 1; min-width: 0; }
+.adj-row .adj-v {
+  width: 40px; text-align: right; flex-shrink: 0;
+  font-family: var(--font-mono); font-size: 10px; color: var(--accent);
+}
+.adj-btns { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
 #clip-hint {
   display: none;
   position: absolute;
@@ -774,6 +800,7 @@ body {
   </div>
   <div class="tb-sep"></div>
   <div class="tb-group">
+    <button class="btn" onclick="openAdjust()" title="Adjust the current image — brightness, contrast, gamma, saturation, RGB">Adjust</button>
     <button class="btn" onclick="undo()" title="Ctrl+Z">↩</button>
     <button class="btn" onclick="redo()" title="Ctrl+Y">↪</button>
   </div>
@@ -789,6 +816,25 @@ body {
     <button class="btn" id="btn-grid" onclick="toggleGrid()">Grid</button>
     <button class="btn" id="btn-sprite-mode" onclick="toggleSpriteMode()" title="Sprite Editor Mode">Sprites</button>
     <button class="btn" onclick="showAbout()">?</button>
+  </div>
+</div>
+
+<!-- ADJUSTMENTS PANEL — recolours the current image's palette live -->
+<div id="adjust-panel">
+  <div class="adj-title">Adjustments</div>
+  <div class="adj-sub">Recolours the current image's palette. Pixels are unchanged.</div>
+  <div class="adj-row"><span>Brightness</span><input type="range" id="adj-bright"   min="-100" max="100" value="0"   oninput="adjustPreview()"><span class="adj-v" id="adj-bright-v">0</span></div>
+  <div class="adj-row"><span>Contrast</span>  <input type="range" id="adj-contrast" min="-100" max="100" value="0"   oninput="adjustPreview()"><span class="adj-v" id="adj-contrast-v">0</span></div>
+  <div class="adj-row"><span>Gamma</span>     <input type="range" id="adj-gamma"    min="10"   max="300" value="100" oninput="adjustPreview()"><span class="adj-v" id="adj-gamma-v">1.00</span></div>
+  <div class="adj-row"><span>Saturation</span><input type="range" id="adj-sat"      min="0"    max="200" value="100" oninput="adjustPreview()"><span class="adj-v" id="adj-sat-v">100%</span></div>
+  <div class="adj-row"><span>Red</span>       <input type="range" id="adj-red"      min="-100" max="100" value="0"   oninput="adjustPreview()"><span class="adj-v" id="adj-red-v">0</span></div>
+  <div class="adj-row"><span>Green</span>     <input type="range" id="adj-grn"      min="-100" max="100" value="0"   oninput="adjustPreview()"><span class="adj-v" id="adj-grn-v">0</span></div>
+  <div class="adj-row"><span>Blue</span>      <input type="range" id="adj-blu"      min="-100" max="100" value="0"   oninput="adjustPreview()"><span class="adj-v" id="adj-blu-v">0</span></div>
+  <div class="adj-btns">
+    <button class="rot-btn" onclick="adjReset()" title="Reset all sliders">↺ Reset</button>
+    <div style="flex:1"></div>
+    <button class="rot-btn commit" onclick="adjApply()" title="Apply to the image">✓ Apply</button>
+    <button class="rot-btn" onclick="adjCancel()" title="Discard (Esc)">✕ Cancel</button>
   </div>
 </div>
 
@@ -3373,6 +3419,134 @@ function cancelScale() {
 }
 
 // ════════════════════════════════════════════════════════
+// IMAGE ADJUSTMENTS (applied to the current canvas)
+// The canvas image is already reduced to a palette, so adjustments act in
+// palette space: each CLUT/line-interrupt colour is pushed through the same
+// brightness/contrast/gamma/saturation/RGB maths as the import wizard, then
+// snapped to the nearest SAM palette entry. Pixel data is never touched.
+// ════════════════════════════════════════════════════════
+let adjOrig = null;   // snapshot of palette indices taken when the panel opens
+
+function nearestSAMIndex(r, g, b) {
+  let best = 0, bd = Infinity;
+  for (let p = 0; p < 128; p++) {
+    const rgb = SAM_PALETTE_RGB[p];
+    const dr = ((rgb>>16)&255)-r, dg = ((rgb>>8)&255)-g, db = (rgb&255)-b;
+    const d = dr*dr + dg*dg + db*db;
+    if (d < bd) { bd = d; best = p; }
+  }
+  return best;
+}
+
+function adjustPalIndex(idx, p) {
+  const rgb = SAM_PALETTE_RGB[idx & 0x7f];
+  const px  = new Uint8ClampedArray([(rgb>>16)&255, (rgb>>8)&255, rgb&255, 255]);
+  const a   = iwAdjust(px, p.bright, p.contrast, p.gamma, p.sat, p.rOff, p.gOff, p.bOff);
+  return nearestSAMIndex(a[0], a[1], a[2]);
+}
+
+function adjGetParams() {
+  const v = id => parseFloat(document.getElementById(id).value);
+  return {
+    bright:   v('adj-bright')   / 100,
+    contrast: v('adj-contrast') / 100,
+    gamma:    v('adj-gamma')    / 100,
+    sat:      v('adj-sat')      / 100,
+    rOff:     v('adj-red')      / 100,
+    gOff:     v('adj-grn')      / 100,
+    bOff:     v('adj-blu')      / 100,
+  };
+}
+
+function updateAdjValueDisplays(p) {
+  document.getElementById('adj-bright-v').textContent   = Math.round(p.bright*100);
+  document.getElementById('adj-contrast-v').textContent = Math.round(p.contrast*100);
+  document.getElementById('adj-gamma-v').textContent    = p.gamma.toFixed(2);
+  document.getElementById('adj-sat-v').textContent      = Math.round(p.sat*100)+'%';
+  document.getElementById('adj-red-v').textContent      = Math.round(p.rOff*100);
+  document.getElementById('adj-grn-v').textContent      = Math.round(p.gOff*100);
+  document.getElementById('adj-blu-v').textContent      = Math.round(p.bOff*100);
+}
+
+function adjResetSliders() {
+  ['adj-bright','adj-contrast','adj-red','adj-grn','adj-blu'].forEach(id => document.getElementById(id).value = 0);
+  document.getElementById('adj-gamma').value = 100;
+  document.getElementById('adj-sat').value   = 100;
+}
+
+// Recompute the live palette from the original snapshot (not cumulative)
+function applyAdjToLive(p) {
+  if (!adjOrig) return;
+  for (let i = 0; i < clut.length;  i++) clut[i]  = adjustPalIndex(adjOrig.clut[i],  p);
+  for (let i = 0; i < clut3.length; i++) clut3[i] = adjustPalIndex(adjOrig.clut3[i], p);
+  for (let i = 0; i < lineInterrupts.length && i < adjOrig.li.length; i++)
+    lineInterrupts[i].palIdx = adjustPalIndex(adjOrig.li[i], p);
+}
+
+function restoreAdjOrig() {
+  if (!adjOrig) return;
+  clut.set(adjOrig.clut);
+  clut3.set(adjOrig.clut3);
+  for (let i = 0; i < lineInterrupts.length && i < adjOrig.li.length; i++)
+    lineInterrupts[i].palIdx = adjOrig.li[i];
+}
+
+function adjRefreshUI() {
+  renderFull();
+  buildClutGrid();
+  updateColourSwatches();
+  renderLintList();
+}
+
+function openAdjust() {
+  // Snapshot the active screen's palette to adjust from
+  adjOrig = {
+    clut:  clut.slice(),
+    clut3: clut3.slice(),
+    li:    lineInterrupts.map(l => l.palIdx),
+  };
+  adjResetSliders();
+  updateAdjValueDisplays(adjGetParams());
+  document.getElementById('adjust-panel').classList.add('visible');
+}
+
+function adjustPreview() {
+  if (!adjOrig) return;
+  const p = adjGetParams();
+  updateAdjValueDisplays(p);
+  applyAdjToLive(p);
+  adjRefreshUI();
+}
+
+function adjReset() {
+  adjResetSliders();
+  updateAdjValueDisplays(adjGetParams());
+  restoreAdjOrig();
+  adjRefreshUI();
+}
+
+function adjApply() {
+  if (!adjOrig) { adjClose(); return; }
+  const p = adjGetParams();
+  restoreAdjOrig();   // put originals back so the undo snapshot is the pre-adjust state
+  pushUndo();
+  applyAdjToLive(p);
+  adjRefreshUI();
+  adjClose();
+}
+
+function adjCancel() {
+  restoreAdjOrig();
+  adjRefreshUI();
+  adjClose();
+}
+
+function adjClose() {
+  document.getElementById('adjust-panel').classList.remove('visible');
+  adjOrig = null;
+}
+
+// ════════════════════════════════════════════════════════
 // DRAW SELECTION BOX ON CURSOR CANVAS
 // ════════════════════════════════════════════════════════
 function drawSelBox() {
@@ -3725,6 +3899,7 @@ function onKeyDown(e) {
     selActive = false;
   }
   if (k === 'escape') {
+    if (document.getElementById('adjust-panel').classList.contains('visible')) { adjCancel(); return; }
     if (multiClick) { multiClick = null; cctx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height); return; }
     if (rotPanel.classList.contains('visible')) { cancelRotate(); return; }
     if (lintWizStep > 0) { cancelLintWizard(); return; }
@@ -6355,6 +6530,8 @@ function setScreenFilename(name) {
 
 function switchScreen(idx) {
   if (idx === activeScreenIdx) return;
+  // Close the adjustments panel on the current screen first (restores its palette)
+  if (document.getElementById('adjust-panel').classList.contains('visible')) adjCancel();
   // A floating paste (after Copy/Cut/Mask/Scale) carries over to the other
   // screen so it can be placed there. selBuffer is global, so it survives; we
   // just re-arm paste mode on the new screen below.
