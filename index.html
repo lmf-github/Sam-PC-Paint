@@ -560,6 +560,17 @@ body {
   box-shadow: 0 2px 8px rgba(0,0,0,0.5);
 }
 #scale-panel.visible { display: block; }
+#aa-panel {
+  display: none;
+  position: absolute;
+  z-index: 49;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  padding: 6px 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+}
+#aa-panel.visible { display: block; }
 .scale-lbl {
   font-family: var(--font-ui); font-size: 11px; color: var(--text2);
   display: inline-flex; align-items: center; gap: 3px;
@@ -928,6 +939,8 @@ body {
         <div class="sel-sep"></div>
         <button class="sel-btn scale-toggle" onclick="toggleScalePanel()" title="Scale selection">⤢ Scale</button>
         <div class="sel-sep"></div>
+        <button class="sel-btn aa-toggle" onclick="toggleAAPanel()" title="Anti-alias edges within the selection (M3/M4)">◣ AA</button>
+        <div class="sel-sep"></div>
         <button class="sel-btn"      onclick="clearSel()"           title="Escape">✕</button>
       </div>
       <!-- Rotate angle panel — shown inline below sel-toolbar -->
@@ -955,6 +968,18 @@ body {
           <button class="rot-btn"        onclick="cancelScale()" title="Cancel">✕</button>
         </div>
         <div style="font-size:9px;color:var(--text3);margin-top:3px;">100% = original · scaled copy floats — click to place · Esc to finish</div>
+      </div>
+      <!-- Anti-alias panel — shown inline below sel-toolbar -->
+      <div id="aa-panel">
+        <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;">
+          <span style="font-size:11px;color:var(--text2);">Anti-alias:</span>
+          <button class="rot-btn" onclick="applyAntiAlias('low')"  title="Subtle — few edges softened">Low</button>
+          <button class="rot-btn" onclick="applyAntiAlias('med')"  title="Moderate">Med</button>
+          <button class="rot-btn" onclick="applyAntiAlias('high')" title="Strong — more edges softened">High</button>
+          <div class="rot-sep"></div>
+          <button class="rot-btn" onclick="closeAAPanel()" title="Close">✕</button>
+        </div>
+        <div style="font-size:9px;color:var(--text3);margin-top:3px;" id="aa-hint">Blends edges using existing palette colours · undo to revert</div>
       </div>
       <!-- Paste mode hint -->
       <div id="clip-hint">Click to paste · Esc to cancel</div>
@@ -3070,6 +3095,7 @@ function clearSel() {
   document.getElementById('sel-toolbar').classList.remove('visible');
   document.getElementById('rotate-panel').classList.remove('visible');
   document.getElementById('scale-panel').classList.remove('visible');
+  document.getElementById('aa-panel').classList.remove('visible');
   document.getElementById('clip-hint').classList.remove('visible');
   mainCanvas.style.cursor = 'crosshair';
   cctx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
@@ -3216,6 +3242,7 @@ function toggleRotatePanel() {
 function openRotatePanel() {
   if (!selActive || !selBuffer) return;
   document.getElementById('scale-panel').classList.remove('visible');
+  document.getElementById('aa-panel').classList.remove('visible');
   rotAngle = 0;
   // Take a clean snapshot of the selection before any preview changes
   rotPreviewBuf = {
@@ -3355,6 +3382,7 @@ function toggleScalePanel() {
 function openScalePanel() {
   if (!selActive || !selBuffer) return;
   if (document.getElementById('rotate-panel').classList.contains('visible')) cancelRotate();
+  document.getElementById('aa-panel').classList.remove('visible');
   positionScalePanel();
   document.getElementById('scale-panel').classList.add('visible');
 }
@@ -3416,6 +3444,123 @@ function applyScale() {
 
 function cancelScale() {
   document.getElementById('scale-panel').classList.remove('visible');
+}
+
+// ── Anti-alias the selection ──────────────────────────────
+// Softens hard edges by blending edge pixels toward their neighbourhood mean
+// and snapping to the NEAREST existing CLUT colour. If the nearest match is
+// still the original (no suitable intermediate in the palette) the pixel is
+// left unchanged. M3/M4 only — attribute modes have no per-pixel intermediates.
+function toggleAAPanel() {
+  const p = document.getElementById('aa-panel');
+  if (p.classList.contains('visible')) closeAAPanel();
+  else openAAPanel();
+}
+
+function openAAPanel() {
+  if (!selActive || !selBuffer) return;
+  document.getElementById('rotate-panel').classList.remove('visible');
+  document.getElementById('scale-panel').classList.remove('visible');
+  const p  = document.getElementById('aa-panel');
+  const tb = document.getElementById('sel-toolbar');
+  const tbTop  = parseInt(tb.style.top  || 0);
+  const tbLeft = parseInt(tb.style.left || 0);
+  p.style.left = tbLeft + 'px';
+  p.style.top  = (tbTop + tb.offsetHeight + 4) + 'px';
+  const hint = document.getElementById('aa-hint');
+  if (mode === 1 || mode === 2)
+    hint.textContent = 'Unavailable in M1/M2 — needs an indexed mode (M3/M4)';
+  else
+    hint.textContent = 'Blends edges using existing palette colours · undo to revert';
+  p.classList.add('visible');
+}
+
+function closeAAPanel() {
+  document.getElementById('aa-panel').classList.remove('visible');
+}
+
+function applyAntiAlias(level) {
+  if (!selActive || !selBuffer) return;
+  if (mode === 1 || mode === 2) {
+    alert('Anti-aliasing needs an indexed mode — switch to Mode 3 or 4.');
+    return;
+  }
+  const PARAMS = {
+    low:  { alpha: 0.34, edge: 48, accept: 70  },
+    med:  { alpha: 0.50, edge: 36, accept: 100 },
+    high: { alpha: 0.68, edge: 28, accept: 140 },
+  };
+  const pr = PARAMS[level];
+  if (!pr) return;
+
+  const slots = mode === 3 ? 4 : 16;
+  const pal   = mode === 3 ? clut3 : clut;
+  // RGB for each candidate slot (base CLUT; per-row line-interrupt colours are
+  // not accounted for — AA is a best-effort cosmetic pass)
+  const cand = [];
+  for (let s = 0; s < slots; s++) {
+    const rgb = SAM_PALETTE_RGB[pal[s] & 0x7f];
+    cand.push([(rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255]);
+  }
+
+  const b = getSelBounds();
+  const edits = [];   // collect first so edits don't cascade within one pass
+
+  for (let y = b.y1; y <= b.y2; y++) {
+    for (let x = b.x1; x <= b.x2; x++) {
+      const c0 = pixelBuf[y * screenW + x];
+      if (c0 >= slots) continue;
+      const [r0, g0, b0] = cand[c0];
+
+      let sr = 0, sg = 0, sb = 0, n = 0, diffMax = 0, hasDiff = false;
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++) {
+          if (!dx && !dy) continue;
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= screenW || ny >= screenH) continue;
+          const cn = pixelBuf[ny * screenW + nx];
+          if (cn >= slots) continue;
+          const [rn, gn, bn] = cand[cn];
+          sr += rn; sg += gn; sb += bn; n++;
+          if (cn !== c0) {
+            hasDiff = true;
+            const dd = (rn-r0)*(rn-r0) + (gn-g0)*(gn-g0) + (bn-b0)*(bn-b0);
+            if (dd > diffMax) diffMax = dd;
+          }
+        }
+      if (!n || !hasDiff) continue;                    // flat interior — skip
+      if (Math.sqrt(diffMax) < pr.edge) continue;      // edge too weak — skip
+
+      const mr = sr / n, mg = sg / n, mb = sb / n;
+      const tr = r0 + (mr - r0) * pr.alpha;
+      const tg = g0 + (mg - g0) * pr.alpha;
+      const tb2 = b0 + (mb - b0) * pr.alpha;
+
+      let best = c0, bd = Infinity;
+      for (let s = 0; s < slots; s++) {
+        const [cr, cg, cb] = cand[s];
+        const d = (cr-tr)*(cr-tr) + (cg-tg)*(cg-tg) + (cb-tb2)*(cb-tb2);
+        if (d < bd) { bd = d; best = s; }
+      }
+      if (best === c0) continue;                        // nearest is the original — no intermediate
+      const d0 = (r0-tr)*(r0-tr) + (g0-tg)*(g0-tg) + (b0-tb2)*(b0-tb2);
+      if (bd >= d0) continue;                           // not actually closer to the blend
+      if (Math.sqrt(bd) > pr.accept) continue;          // no palette colour close enough — leave unchanged
+      edits.push([y * screenW + x, best]);
+    }
+  }
+
+  const st = document.getElementById('aa-hint');
+  if (!edits.length) {
+    if (st) st.textContent = 'No suitable palette colours for these edges — nothing changed';
+    return;
+  }
+  pushUndo();
+  for (const [i, v] of edits) pixelBuf[i] = v;
+  renderFull();
+  snapSelection();   // keep the snapshot current
+  drawSelBox();
+  if (st) st.textContent = `${level.toUpperCase()}: ${edits.length} edge pixel${edits.length===1?'':'s'} softened · undo to revert`;
 }
 
 // ════════════════════════════════════════════════════════
@@ -3759,6 +3904,7 @@ function onMouseDown(e) {
       document.getElementById('sel-toolbar').classList.remove('visible');
       document.getElementById('rotate-panel').classList.remove('visible');
       document.getElementById('scale-panel').classList.remove('visible');
+      document.getElementById('aa-panel').classList.remove('visible');
       cctx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
     }
     dragStart = {x, y}; dragEnd = {x, y};
@@ -3896,12 +4042,14 @@ function onKeyDown(e) {
     document.getElementById('sel-toolbar').classList.remove('visible');
     document.getElementById('rotate-panel').classList.remove('visible');
     document.getElementById('scale-panel').classList.remove('visible');
+    document.getElementById('aa-panel').classList.remove('visible');
     selActive = false;
   }
   if (k === 'escape') {
     if (document.getElementById('adjust-panel').classList.contains('visible')) { adjCancel(); return; }
     if (multiClick) { multiClick = null; cctx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height); return; }
     if (rotPanel.classList.contains('visible')) { cancelRotate(); return; }
+    if (document.getElementById('aa-panel').classList.contains('visible')) { closeAAPanel(); return; }
     if (lintWizStep > 0) { cancelLintWizard(); return; }
     if (clipActive) { exitPasteMode(); return; }
     clearSel();
@@ -3974,6 +4122,7 @@ function setTool(name) {
     document.getElementById('sel-toolbar').classList.remove('visible');
     document.getElementById('rotate-panel').classList.remove('visible');
     document.getElementById('scale-panel').classList.remove('visible');
+    document.getElementById('aa-panel').classList.remove('visible');
     document.getElementById('clip-hint').classList.remove('visible');
   }
   applyToolCursor();
