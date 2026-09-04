@@ -935,6 +935,8 @@ body {
         <div class="sel-sep"></div>
         <button class="sel-btn"      onclick="swapFgBgInSelection()" title="Swap FG and BG colours within the selection">⇄ FG/BG</button>
         <div class="sel-sep"></div>
+        <button class="sel-btn"      onclick="replaceBgFgInSelection()" title="Replace BG colour with FG within the selection">BG→FG</button>
+        <div class="sel-sep"></div>
         <button class="sel-btn rotate-toggle" onclick="toggleRotatePanel()" title="Rotate selection">↻ Rotate</button>
         <div class="sel-sep"></div>
         <button class="sel-btn scale-toggle" onclick="toggleScalePanel()" title="Scale selection">⤢ Scale</button>
@@ -3367,6 +3369,36 @@ function swapFgBgInSelection() {
   }
   renderFull();
   snapSelection();   // keep the snapshot in sync for later copy/rotate/scale
+  drawSelBox();
+}
+
+// ── Replace BG colour with FG within the selection ────────
+// Selection-scoped version of the global BG→FG replace.
+function replaceBgFgInSelection() {
+  if (!selActive || !selBuffer) return;
+  if (fgColor === bgColor) return;
+  pushUndo();
+  const b = getSelBounds();
+  if (mode === 1 || mode === 2) {
+    // Attribute modes: repaint paper pixels whose cell paper maps to bgColor
+    for (let y = b.y1; y <= b.y2; y++)
+      for (let x = b.x1; x <= b.x2; x++) {
+        if (pixelBuf[y * 256 + x] !== 0) continue;   // ink pixel — leave
+        const attrIdx = mode === 1 ? Math.floor(y/8)*32+Math.floor(x/8) : y*32+Math.floor(x/8);
+        const attr = attrBuf[attrIdx] || 0;
+        const paper = (attr >> 3) & 7, bright = (attr >> 6) & 1;
+        if ((paper + (bright ? 8 : 0)) === bgColor) setPixelAttr(x, y, fgColor);
+      }
+  } else {
+    // M3/M4: swap every bgColor slot to fgColor
+    for (let y = b.y1; y <= b.y2; y++)
+      for (let x = b.x1; x <= b.x2; x++) {
+        const i = y*screenW+x;
+        if (pixelBuf[i] === bgColor) pixelBuf[i] = fgColor;
+      }
+  }
+  renderFull();
+  snapSelection();
   drawSelBox();
 }
 
