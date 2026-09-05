@@ -825,6 +825,11 @@ body {
   <div class="tb-sep"></div>
   <div class="tb-group">
     <button class="btn" id="btn-grid" onclick="toggleGrid()">Grid</button>
+    <span id="grid-size-ctl" style="display:none;align-items:center;gap:2px;">
+      <button class="btn" onclick="gridSizeStep(-1)" title="Smaller grid cell">−</button>
+      <span class="zoom-display" id="grid-size-disp" title="Grid cell size">1×1</span>
+      <button class="btn" onclick="gridSizeStep(1)" title="Larger grid cell">+</button>
+    </span>
     <button class="btn" id="btn-sprite-mode" onclick="toggleSpriteMode()" title="Sprite Editor Mode">Sprites</button>
     <button class="btn" onclick="showAbout()">?</button>
   </div>
@@ -1567,6 +1572,8 @@ function addLineInterrupt(li)   { if (S().lineInterrupts.length >= SAM_LI_MAX) r
 
 let zoom = 2;
 let gridVisible  = false;
+let gridSize     = 1;   // spacing of the pixel grid in image pixels (1×1, 2×2, ...)
+const GRID_SIZE_MAX = 64;
 let currentTool  = 'pencil';
 let brushSize    = 1;
 
@@ -2262,13 +2269,15 @@ function renderRegion(x1, y1, x2, y2) {
 function updateGrid() {
   gctx.clearRect(0, 0, gridCanvas.width, gridCanvas.height);
   if (!gridVisible) return;
-  // Fine pixel grid (zoom ≥ 3)
-  if (zoom >= 3) {
+  // Pixel grid at the configured spacing — drawn only when the on-screen cell
+  // is at least 3px, so it never becomes an unreadable smear at low zoom.
+  const step = Math.max(1, gridSize);
+  if (step * zoom >= 3) {
     gctx.strokeStyle = 'rgba(255,255,255,0.10)';
     gctx.lineWidth = 0.5;
     gctx.beginPath();
-    for (let x = 0; x <= screenW; x++) { gctx.moveTo(x*zoom,0); gctx.lineTo(x*zoom,screenH*zoom); }
-    for (let y = 0; y <= screenH; y++) { gctx.moveTo(0,y*zoom); gctx.lineTo(screenW*zoom,y*zoom); }
+    for (let x = 0; x <= screenW; x += step) { gctx.moveTo(x*zoom,0); gctx.lineTo(x*zoom,screenH*zoom); }
+    for (let y = 0; y <= screenH; y += step) { gctx.moveTo(0,y*zoom); gctx.lineTo(screenW*zoom,y*zoom); }
     gctx.stroke();
   }
   // Attribute cell grid for modes 1 and 2
@@ -2286,7 +2295,19 @@ function updateGrid() {
 function toggleGrid() {
   gridVisible = !gridVisible;
   document.getElementById('btn-grid').classList.toggle('active', gridVisible);
+  document.getElementById('grid-size-ctl').style.display = gridVisible ? 'inline-flex' : 'none';
+  updateGridSizeUI();
   updateGrid();
+}
+
+function updateGridSizeUI() {
+  document.getElementById('grid-size-disp').textContent = `${gridSize}×${gridSize}`;
+}
+
+function gridSizeStep(delta) {
+  gridSize = Math.max(1, Math.min(GRID_SIZE_MAX, gridSize + delta));
+  updateGridSizeUI();
+  if (gridVisible) updateGrid();
 }
 
 // ════════════════════════════════════════════════════════
