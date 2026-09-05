@@ -4653,6 +4653,7 @@ function importGMSprite(raw, filename) {
   if (nameField) nameField.value = baseName.toUpperCase();
 
   setScreenFilename(filename);
+  fitZoom();   // default to Fit after importing a sprite sheet
   renderFull();
   updateUndoStatus();
 
@@ -4823,6 +4824,7 @@ function doImport(buf, detectedMode, filename) {
   updateColourSwatches();
   renderLintList();
   if (filename) setScreenFilename(filename);
+  fitZoom();   // default to Fit when opening/importing a screen
 
   const st = document.getElementById('st-mode');
   const orig = st.textContent;
@@ -5756,6 +5758,7 @@ function commitImgImport() {
   // Image import always lands in Mode 4 — show the name it would save as, not photo.png
   if (_iwSrcName) setScreenFilename(_iwSrcName.replace(/\.[^.]*$/, '') + '.ss4');
   closeImgWizard();
+  fitZoom();   // default to Fit after importing an image (after the wizard closes)
 }
 
 // ════════════════════════════════════════════════════════
