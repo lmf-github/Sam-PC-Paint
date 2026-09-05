@@ -680,7 +680,7 @@ body {
   border: 1px solid var(--border2);
   border-radius: 8px;
   padding: 0;
-  width: 820px;
+  width: 1180px;
   max-width: 96vw;
   max-height: 92vh;
   display: flex;
@@ -1337,7 +1337,7 @@ body {
 
       </div>
       <div class="wiz-preview">
-        <canvas id="img-preview-canvas" width="256" height="192" style="width:512px;height:384px;image-rendering:pixelated;border:1px solid var(--border2);"></canvas>
+        <canvas id="img-preview-canvas" width="256" height="192" style="image-rendering:pixelated;border:1px solid var(--border2);"></canvas>
         <div class="wiz-info" id="iw-info">256×192 · 16 colours</div>
       </div>
     </div>
@@ -3899,6 +3899,9 @@ function setupEvents() {
   document.addEventListener('keydown', onKeyDown);
   document.getElementById('file-input').addEventListener('change', onFileChange);
   document.getElementById('gm-input').addEventListener('change', onGMFileChange);
+  window.addEventListener('resize', () => {
+    if (document.getElementById('img-wizard').classList.contains('visible')) iwFitPreview();
+  });
   applyToolCursor();   // show the default tool's cursor immediately
 }
 
@@ -5081,6 +5084,27 @@ function closeImgWizard() {
 function iwGet(id) { return document.getElementById(id); }
 function iwVal(id) { return parseFloat(iwGet(id).value); }
 
+// Scale the wizard preview canvas to fill its container, preserving aspect ratio
+function iwFitPreview() {
+  const cv = iwGet('img-preview-canvas');
+  if (!cv) return;
+  const box = cv.parentElement;              // .wiz-preview
+  const info = iwGet('iw-info');
+  const s = getComputedStyle(box);
+  const padX = parseFloat(s.paddingLeft) + parseFloat(s.paddingRight);
+  const padY = parseFloat(s.paddingTop)  + parseFloat(s.paddingBottom);
+  const gap  = parseFloat(s.rowGap || s.gap) || 8;
+  const infoH = info ? info.offsetHeight : 0;
+  const availW = box.clientWidth  - padX;
+  const availH = box.clientHeight - padY - infoH - gap;
+  if (availW <= 0 || availH <= 0) return;
+  const ar = cv.width / cv.height;
+  let w = availW, h = w / ar;
+  if (h > availH) { h = availH; w = h * ar; }
+  cv.style.width  = Math.max(64, Math.floor(w)) + 'px';
+  cv.style.height = Math.max(48, Math.floor(h)) + 'px';
+}
+
 function iwUpdate() {
   if (!_iwSrcPixels) return;
 
@@ -5229,6 +5253,7 @@ function iwUpdate() {
     }
   }
   pctx.putImageData(imgData, 0, 0);
+  iwFitPreview();
 
   // Update info
   const uniqueSlots = liEnable && bandPals
