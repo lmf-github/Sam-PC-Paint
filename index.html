@@ -2273,11 +2273,13 @@ function updateGrid() {
   // is at least 3px, so it never becomes an unreadable smear at low zoom.
   const step = Math.max(1, gridSize);
   if (step * zoom >= 3) {
-    gctx.strokeStyle = 'rgba(255,255,255,0.10)';
-    gctx.lineWidth = 0.5;
+    // 1px lines with a half-pixel offset so they land crisply on one device pixel
+    // (a sub-pixel line antialiases across two pixels and looks washed out).
+    gctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    gctx.lineWidth = 1;
     gctx.beginPath();
-    for (let x = 0; x <= screenW; x += step) { gctx.moveTo(x*zoom,0); gctx.lineTo(x*zoom,screenH*zoom); }
-    for (let y = 0; y <= screenH; y += step) { gctx.moveTo(0,y*zoom); gctx.lineTo(screenW*zoom,y*zoom); }
+    for (let x = 0; x <= screenW; x += step) { const px = Math.round(x*zoom)+0.5; gctx.moveTo(px,0); gctx.lineTo(px,screenH*zoom); }
+    for (let y = 0; y <= screenH; y += step) { const py = Math.round(y*zoom)+0.5; gctx.moveTo(0,py); gctx.lineTo(screenW*zoom,py); }
     gctx.stroke();
   }
   // Attribute cell grid for modes 1 and 2
