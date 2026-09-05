@@ -2365,7 +2365,8 @@ function updateMagnifier(cx, cy) {
     }
     mctx.stroke();
   }
-  mctx.strokeStyle = 'rgba(255,255,255,0.75)'; mctx.lineWidth = 1.5; mctx.beginPath();
+  // Cursor crosshair in yellow so it never blends with the white grid lines
+  mctx.strokeStyle = 'rgba(255,210,0,0.9)'; mctx.lineWidth = 1.5; mctx.beginPath();
   mctx.moveTo(HALF * CELL, 0); mctx.lineTo(HALF * CELL, MAG_CANVAS_PX);
   mctx.moveTo(0, HALF * CELL); mctx.lineTo(MAG_CANVAS_PX, HALF * CELL); mctx.stroke();
   mctx.strokeStyle = 'rgba(255,255,100,0.9)'; mctx.lineWidth = 2;
