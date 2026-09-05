@@ -2351,6 +2351,20 @@ function updateMagnifier(cx, cy) {
   mctx.strokeStyle = 'rgba(255,255,255,0.15)'; mctx.lineWidth = 0.5; mctx.beginPath();
   for (let i = 0; i <= 24; i++) { mctx.moveTo(i * CELL, 0); mctx.lineTo(i * CELL, MAG_CANVAS_PX); mctx.moveTo(0, i * CELL); mctx.lineTo(MAG_CANVAS_PX, i * CELL); }
   mctx.stroke();
+  // Configured pixel grid — same spacing as the canvas, aligned to image coords
+  if (gridVisible) {
+    const stepG = Math.max(1, gridSize);
+    mctx.strokeStyle = 'rgba(255,255,255,0.5)'; mctx.lineWidth = 1; mctx.beginPath();
+    for (let dx = -HALF; dx <= HALF; dx++) {
+      const X = cx + dx;
+      if ((((X % stepG) + stepG) % stepG) === 0) { const sx = (dx + HALF) * CELL + 0.5; mctx.moveTo(sx, 0); mctx.lineTo(sx, MAG_CANVAS_PX); }
+    }
+    for (let dy = -HALF; dy <= HALF; dy++) {
+      const Y = cy + dy;
+      if ((((Y % stepG) + stepG) % stepG) === 0) { const sy = (dy + HALF) * CELL + 0.5; mctx.moveTo(0, sy); mctx.lineTo(MAG_CANVAS_PX, sy); }
+    }
+    mctx.stroke();
+  }
   mctx.strokeStyle = 'rgba(255,255,255,0.75)'; mctx.lineWidth = 1.5; mctx.beginPath();
   mctx.moveTo(HALF * CELL, 0); mctx.lineTo(HALF * CELL, MAG_CANVAS_PX);
   mctx.moveTo(0, HALF * CELL); mctx.lineTo(MAG_CANVAS_PX, HALF * CELL); mctx.stroke();
