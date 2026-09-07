@@ -245,6 +245,7 @@ body {
   border: 2px solid transparent;
   cursor: pointer;
   transition: border-color 0.1s;
+  overflow: hidden;
 }
 .clut-entry:hover { border-color: var(--text2); }
 .clut-entry.selected-fg { border-color: #fff !important; }
@@ -259,28 +260,15 @@ body {
   line-height: 1;
   pointer-events: none;
 }
-/* Usage indicator: dark plate + inner dot — hollow = unused, filled = used.
-   The plate isolates the dot from the swatch colour so it reads on any colour. */
-.clut-entry .slot-dot {
+/* Usage bar chart down the left edge: white fills from the bottom to the
+   percentage of canvas pixels using this slot, black above. Background set
+   inline as a gradient by updateClutUsage(). */
+.clut-entry .slot-bar {
   position: absolute;
-  top: 2px; left: 2px;
-  width: 9px; height: 9px;
-  border-radius: 50%;
-  background: rgba(0,0,0,0.6);
-  box-shadow: 0 0 0 1px rgba(0,0,0,0.5);
-  display: flex; align-items: center; justify-content: center;
+  left: 0; top: 0; bottom: 0;
+  width: 6px;
+  border-right: 1px solid rgba(255,255,255,0.4);
   pointer-events: none;
-}
-.clut-entry .slot-dot::after {
-  content: '';
-  width: 4px; height: 4px;
-  border-radius: 50%;
-  border: 1px solid rgba(255,255,255,0.9);
-  box-sizing: border-box;
-  background: transparent;                 /* hollow = unused */
-}
-.clut-entry .slot-dot.used::after {
-  background: rgba(255,255,255,0.95);       /* filled = used */
 }
 
 /* Colour swatches */
@@ -1992,10 +1980,9 @@ function buildClutGrid() {
     const num = document.createElement('span');
     num.className = 'slot-num'; num.textContent = i;
     d.appendChild(num);
-    const dot = document.createElement('span');
-    dot.className = 'slot-dot';
-    dot.title = 'Filled = colour used on canvas · hollow = unused';
-    d.appendChild(dot);
+    const bar = document.createElement('span');
+    bar.className = 'slot-bar';
+    d.appendChild(bar);
     d.addEventListener('click', e => {
       if (e.shiftKey) { openClutReassign(i); return; }
       fgColor = i; buildClutGrid(); updateColourSwatches(); buildClutEditor(i);
@@ -2009,15 +1996,16 @@ function buildClutGrid() {
   updateClutUsage();
 }
 
-// Mark each CLUT swatch's dot filled (used) or hollow (unused) by scanning the
-// canvas for pixels that reference that slot.
+// Draw a black-and-white usage bar on each CLUT swatch: white height = the
+// percentage of canvas pixels that use that slot, black for the remainder.
 function updateClutUsage() {
   const grid = document.getElementById('clut-grid');
   if (!grid) return;
-  const dots = grid.querySelectorAll('.slot-dot');
-  if (!dots.length) return;
+  const bars = grid.querySelectorAll('.slot-bar');
+  if (!bars.length) return;
   const slots = mode === 3 ? 4 : 16;
-  const used = new Uint8Array(slots);
+  const count = new Float64Array(slots);
+  let total = 0;
   if (mode === 1 || mode === 2) {
     for (let y = 0; y < screenH; y++)
       for (let x = 0; x < 256; x++) {
@@ -2026,16 +2014,23 @@ function updateClutUsage() {
         const attr = attrBuf[attrIdx] || 0;
         const ink = attr & 7, paper = (attr >> 3) & 7, bright = (attr >> 6) & 1;
         const s = pixel ? ink + (bright ? 8 : 0) : paper + (bright ? 8 : 0);
-        if (s < slots) used[s] = 1;
+        if (s < slots) count[s]++;
+        total++;
       }
   } else {
     for (let y = 0; y < screenH; y++)
       for (let x = 0; x < screenW; x++) {
         const s = pixelBuf[y * screenW + x];
-        if (s < slots) used[s] = 1;
+        if (s < slots) count[s]++;
+        total++;
       }
   }
-  dots.forEach((dot, i) => dot.classList.toggle('used', !!used[i]));
+  bars.forEach((bar, i) => {
+    const pct = total ? (count[i] / total) * 100 : 0;
+    const p = Math.max(0, Math.min(100, pct));
+    bar.style.background = `linear-gradient(to top, #fff 0 ${p}%, #000 ${p}% 100%)`;
+    bar.title = `Slot ${i}: ${p.toFixed(p < 10 ? 1 : 0)}% of canvas`;
+  });
 }
 
 function openClutReassign(slot) {
