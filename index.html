@@ -259,6 +259,29 @@ body {
   line-height: 1;
   pointer-events: none;
 }
+/* Usage indicator: dark plate + inner dot — hollow = unused, filled = used.
+   The plate isolates the dot from the swatch colour so it reads on any colour. */
+.clut-entry .slot-dot {
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.6);
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.5);
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
+}
+.clut-entry .slot-dot::after {
+  content: '';
+  width: 4px; height: 4px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.9);
+  box-sizing: border-box;
+  background: transparent;                 /* hollow = unused */
+}
+.clut-entry .slot-dot.used::after {
+  background: rgba(255,255,255,0.95);       /* filled = used */
+}
 
 /* Colour swatches */
 .fg-bg-display {
@@ -1969,6 +1992,10 @@ function buildClutGrid() {
     const num = document.createElement('span');
     num.className = 'slot-num'; num.textContent = i;
     d.appendChild(num);
+    const dot = document.createElement('span');
+    dot.className = 'slot-dot';
+    dot.title = 'Filled = colour used on canvas · hollow = unused';
+    d.appendChild(dot);
     d.addEventListener('click', e => {
       if (e.shiftKey) { openClutReassign(i); return; }
       fgColor = i; buildClutGrid(); updateColourSwatches(); buildClutEditor(i);
@@ -1979,6 +2006,36 @@ function buildClutGrid() {
     });
     grid.appendChild(d);
   }
+  updateClutUsage();
+}
+
+// Mark each CLUT swatch's dot filled (used) or hollow (unused) by scanning the
+// canvas for pixels that reference that slot.
+function updateClutUsage() {
+  const grid = document.getElementById('clut-grid');
+  if (!grid) return;
+  const dots = grid.querySelectorAll('.slot-dot');
+  if (!dots.length) return;
+  const slots = mode === 3 ? 4 : 16;
+  const used = new Uint8Array(slots);
+  if (mode === 1 || mode === 2) {
+    for (let y = 0; y < screenH; y++)
+      for (let x = 0; x < 256; x++) {
+        const pixel = pixelBuf[y * 256 + x];
+        const attrIdx = mode === 1 ? (Math.floor(y/8)*32 + Math.floor(x/8)) : (y*32 + Math.floor(x/8));
+        const attr = attrBuf[attrIdx] || 0;
+        const ink = attr & 7, paper = (attr >> 3) & 7, bright = (attr >> 6) & 1;
+        const s = pixel ? ink + (bright ? 8 : 0) : paper + (bright ? 8 : 0);
+        if (s < slots) used[s] = 1;
+      }
+  } else {
+    for (let y = 0; y < screenH; y++)
+      for (let x = 0; x < screenW; x++) {
+        const s = pixelBuf[y * screenW + x];
+        if (s < slots) used[s] = 1;
+      }
+  }
+  dots.forEach((dot, i) => dot.classList.toggle('used', !!used[i]));
 }
 
 function openClutReassign(slot) {
@@ -2120,6 +2177,7 @@ function renderFull() {
   if (mode === 1 || mode === 2) {
     renderFullAttr();
     renderClutIndicator();
+    updateClutUsage();
     return;
   }
 
@@ -2143,6 +2201,7 @@ function renderFull() {
     }
   }
   renderClutIndicator();
+  updateClutUsage();
 }
 
 // Render the CLUT indicator strip: 16 columns × 192 rows
@@ -4072,6 +4131,7 @@ function onMouseUp(e) {
       cctx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
     }
   }
+  updateClutUsage();   // refresh used/unused dots after a drawing stroke
 }
 
 function onMouseLeave() {
