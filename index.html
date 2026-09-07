@@ -2027,9 +2027,11 @@ function updateClutUsage() {
   }
   bars.forEach((bar, i) => {
     const pct = total ? (count[i] / total) * 100 : 0;
-    const p = Math.max(0, Math.min(100, pct));
-    bar.style.background = `linear-gradient(to top, #fff 0 ${p}%, #000 ${p}% 100%)`;
-    bar.title = `Slot ${i}: ${p.toFixed(p < 10 ? 1 : 0)}% of canvas`;
+    // Quantise to 20 steps (5% each), rounding up — so any nonzero usage shows
+    // at least a 5% bar and reads distinctly from zero.
+    const stepped = Math.min(100, Math.ceil(pct / 5) * 5);
+    bar.style.background = `linear-gradient(to top, #fff 0 ${stepped}%, #000 ${stepped}% 100%)`;
+    bar.title = `Slot ${i}: ${count[i]} px (${pct.toFixed(2)}%)`;
   });
 }
 
