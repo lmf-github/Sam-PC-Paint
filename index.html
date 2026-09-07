@@ -270,6 +270,18 @@ body {
   border-right: 1px solid rgba(255,255,255,0.4);
   pointer-events: none;
 }
+/* Unused slot (0 pixels): black diagonal line top-left → bottom-right */
+.clut-entry.unused::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top right,
+    transparent calc(50% - 1.2px),
+    rgba(0,0,0,0.88) calc(50% - 1.2px),
+    rgba(0,0,0,0.88) calc(50% + 1.2px),
+    transparent calc(50% + 1.2px));
+  pointer-events: none;
+}
 
 /* Colour swatches */
 .fg-bg-display {
@@ -2032,6 +2044,7 @@ function updateClutUsage() {
     const stepped = Math.min(100, Math.ceil(pct / 5) * 5);
     bar.style.background = `linear-gradient(to top, #fff 0 ${stepped}%, #000 ${stepped}% 100%)`;
     bar.title = `Slot ${i}: ${count[i]} px (${pct.toFixed(2)}%)`;
+    if (bar.parentElement) bar.parentElement.classList.toggle('unused', count[i] === 0);
   });
 }
 
