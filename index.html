@@ -1152,6 +1152,7 @@ body {
       <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;">
         <button class="btn" style="font-size:10px;padding:2px 6px;" onclick="addClutFromFg()">Add FG</button>
         <button class="btn" style="font-size:10px;padding:2px 6px;" onclick="resetClut()">Reset</button>
+        <button class="btn" style="font-size:10px;padding:2px 6px;" onclick="openPaletteCopy()" title="Copy a screen's palette to another screen">Copy Palette…</button>
       </div>
       <!-- Channel editor — shown when a CLUT slot is selected -->
       <div id="clut-editor">
@@ -7013,6 +7014,109 @@ function copyScreenTo(targetIdx) {
   const tab = document.getElementById('tab-' + targetIdx);
   if (tab) { tab.style.color = 'var(--green)'; setTimeout(() => tab.style.color = '', 600); }
   if (windowedMode) renderScreenPreview(targetIdx);
+}
+
+// ════════════════════════════════════════════════════════
+// COPY PALETTE BETWEEN SCREENS
+// Two-step dialog: pick From/To screens, then preview both palettes as colour
+// blocks and confirm before overwriting the target's CLUT.
+// ════════════════════════════════════════════════════════
+function palcopySwatches(idx) {
+  const scr = screens[idx];
+  const slots = scr.mode === 3 ? 4 : 16;
+  let html = '<div style="display:flex;flex-wrap:wrap;gap:3px;">';
+  for (let i = 0; i < slots; i++) {
+    const rgb = SAM_PALETTE_RGB[scr.clut[i] & 0x7f];
+    const css = `rgb(${(rgb>>16)&255},${(rgb>>8)&255},${rgb&255})`;
+    html += `<div title="Slot ${i}: palette ${scr.clut[i]}" style="width:18px;height:18px;border-radius:2px;background:${css};border:1px solid rgba(255,255,255,0.25);"></div>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+function openPaletteCopy() {
+  const old = document.getElementById('palcopy-modal');
+  if (old) old.remove();
+  const modal = document.createElement('div');
+  modal.id = 'palcopy-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:999;display:flex;align-items:center;justify-content:center;';
+  const opts = screens.map((s, i) => `<option value="${i}">${s.label}${s.filename ? ' · ' + s.filename : ''}</option>`).join('');
+  modal.innerHTML = `
+    <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:18px 20px;width:360px;font-family:var(--font-ui);">
+      <div style="font-size:14px;font-weight:500;color:var(--accent);margin-bottom:14px;">Copy Palette Between Screens</div>
+      <div id="palcopy-step1">
+        <div style="display:flex;gap:12px;margin-bottom:16px;">
+          <label style="flex:1;font-size:11px;color:var(--text2);">From (copy palette of)
+            <select id="palcopy-from" class="wiz-select" style="margin-top:3px;">${opts}</select></label>
+          <label style="flex:1;font-size:11px;color:var(--text2);">To (overwrite palette of)
+            <select id="palcopy-to" class="wiz-select" style="margin-top:3px;">${opts}</select></label>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;">
+          <button class="rot-btn" onclick="closePaletteCopy()">Cancel</button>
+          <button class="rot-btn commit" onclick="palcopyPreview()">OK</button>
+        </div>
+      </div>
+      <div id="palcopy-step2" style="display:none;"></div>
+    </div>`;
+  document.body.appendChild(modal);
+  document.getElementById('palcopy-from').value = String(activeScreenIdx);
+  document.getElementById('palcopy-to').value   = String((activeScreenIdx + 1) % screens.length);
+}
+
+function palcopyPreview() {
+  const from = +document.getElementById('palcopy-from').value;
+  const to   = +document.getElementById('palcopy-to').value;
+  if (from === to) { alert('Choose two different screens.'); return; }
+  document.getElementById('palcopy-step1').style.display = 'none';
+  const step2 = document.getElementById('palcopy-step2');
+  step2.style.display = 'block';
+  step2.innerHTML = `
+    <div style="font-size:11px;color:var(--text2);margin-bottom:5px;">From <b style="color:var(--text)">${screens[from].label}</b> — palette to copy:</div>
+    ${palcopySwatches(from)}
+    <div style="font-size:11px;color:var(--text2);margin:12px 0 5px;">To <b style="color:var(--text)">${screens[to].label}</b> — palette that will be overwritten:</div>
+    ${palcopySwatches(to)}
+    <div style="font-size:10px;color:var(--text3);margin-top:10px;">This replaces ${screens[to].label}'s palette with ${screens[from].label}'s. Pixel data and line interrupts are unchanged.</div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+      <button class="rot-btn" onclick="palcopyBack()">← Back</button>
+      <button class="rot-btn" onclick="closePaletteCopy()">Cancel</button>
+      <button class="rot-btn commit" onclick="palcopyConfirm(${from},${to})">✓ Confirm</button>
+    </div>`;
+}
+
+function palcopyBack() {
+  document.getElementById('palcopy-step2').style.display = 'none';
+  document.getElementById('palcopy-step1').style.display = 'block';
+}
+
+function closePaletteCopy() {
+  const m = document.getElementById('palcopy-modal');
+  if (m) m.remove();
+}
+
+function palcopyConfirm(from, to) {
+  const src = screens[from], dst = screens[to];
+  // Undo snapshot for the target screen (matches pushUndo's shape)
+  if (to === activeScreenIdx) {
+    pushUndo();
+  } else {
+    dst.undoStack.push({ buf: dst.pixelBuf.slice(), attr: dst.attrBuf.slice(), clut: dst.clut.slice(), li: JSON.parse(JSON.stringify(dst.lineInterrupts)) });
+    if (dst.undoStack.length > MAX_UNDO) dst.undoStack.shift();
+    dst.redoStack.length = 0;
+  }
+  // Copy the palette (in place, keeping the array references)
+  dst.clut.set(src.clut);
+  dst.clut3.set(src.clut3);
+  closePaletteCopy();
+  // Refresh whatever is currently on screen
+  if (to === activeScreenIdx) { buildClutGrid(); updateColourSwatches(); renderFull(); updateUndoStatus(); }
+  if (windowedMode) renderScreenPreview(to);
+  const st = document.getElementById('st-mode');
+  if (st) {
+    const orig = st.textContent;
+    st.textContent = `✓ Palette ${src.label} → ${dst.label}`;
+    st.style.color = 'var(--green)';
+    setTimeout(() => { st.textContent = orig; st.style.color = ''; }, 3000);
+  }
 }
 
 // ════════════════════════════════════════════════════════
