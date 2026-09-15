@@ -1664,6 +1664,7 @@ let brushSize    = 1;
 let selActive = false;
 let selX1 = 0, selY1 = 0, selX2 = 0, selY2 = 0;
 let selBuffer = null;
+let selResize = null;   // active corner-handle resize gesture on the selection
 
 // clipboard / paste mode state
 let clipActive = false;  // true while floating paste box follows cursor
@@ -3261,6 +3262,7 @@ function exitPasteMode() {
 function clearSel() {
   selActive  = false;
   clipActive = false;
+  selResize  = null;
   rotPreviewBuf = null;
   rotAngle = 0;
   document.getElementById('sel-toolbar').classList.remove('visible');
@@ -3898,12 +3900,106 @@ function adjClose() {
 function drawSelBox() {
   cctx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
   if (!selActive) return;
-  const b = getSelBounds();
+  drawSelBoxRect(getSelBounds(), selHandlesEnabled());
+}
+
+// Corner scale handles are available for the Select tool in indexed modes (M3/M4)
+function selHandlesEnabled() {
+  return currentTool === 'select' && (mode === 3 || mode === 4);
+}
+
+function drawSelBoxRect(b, withHandles) {
   cctx.strokeStyle = '#fff';
   cctx.lineWidth = 1;
   cctx.setLineDash([4, 4]);
   cctx.strokeRect(b.x1 * zoom, b.y1 * zoom, (b.x2 - b.x1 + 1) * zoom, (b.y2 - b.y1 + 1) * zoom);
   cctx.setLineDash([]);
+  if (!withHandles) return;
+  const hs = Math.max(7, Math.min(11, zoom * 3));   // handle square size in px
+  const rX = (b.x2 + 1) * zoom, bY = (b.y2 + 1) * zoom, lX = b.x1 * zoom, tY = b.y1 * zoom;
+  const corners = [[lX, tY], [rX, tY], [lX, bY], [rX, bY]];
+  cctx.lineWidth = 1;
+  for (const [cx, cy] of corners) {
+    cctx.fillStyle = '#fff';
+    cctx.fillRect(cx - hs/2, cy - hs/2, hs, hs);
+    cctx.strokeStyle = '#000'; cctx.setLineDash([]);
+    cctx.strokeRect(cx - hs/2, cy - hs/2, hs, hs);
+  }
+}
+
+// Which corner handle (if any) is at image position (x,y)? Returns nw/ne/sw/se.
+function selHandleHit(x, y) {
+  if (!selActive || !selHandlesEnabled()) return null;
+  const b = getSelBounds();
+  const t = Math.max(2, Math.ceil(9 / zoom));
+  const near = (cx, cy) => Math.abs(x - cx) <= t && Math.abs(y - cy) <= t;
+  if (near(b.x1, b.y1)) return 'nw';
+  if (near(b.x2, b.y1)) return 'ne';
+  if (near(b.x1, b.y2)) return 'sw';
+  if (near(b.x2, b.y2)) return 'se';
+  return null;
+}
+
+function startSelResize(corner) {
+  const b = getSelBounds();
+  selResize = {
+    fixedX: corner.includes('w') ? b.x2 : b.x1,   // opposite corner stays anchored
+    fixedY: corner.includes('n') ? b.y2 : b.y1,
+    origBounds: { x1: b.x1, y1: b.y1, x2: b.x2, y2: b.y2 },
+    src: { w: selBuffer.w, h: selBuffer.h, data: new Uint8Array(selBuffer.data) },
+  };
+}
+
+function selResizeBounds(x, y) {
+  return {
+    x1: Math.max(0, Math.min(selResize.fixedX, x)),
+    y1: Math.max(0, Math.min(selResize.fixedY, y)),
+    x2: Math.min(screenW - 1, Math.max(selResize.fixedX, x)),
+    y2: Math.min(screenH - 1, Math.max(selResize.fixedY, y)),
+  };
+}
+
+// Live preview of the scaled contents while dragging a handle
+function drawSelResizePreview(nb) {
+  cctx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
+  const src = selResize.src;
+  const slots = mode === 3 ? 4 : 16;
+  const nw = nb.x2 - nb.x1 + 1, nh = nb.y2 - nb.y1 + 1;
+  for (let yy = 0; yy < nh; yy++) {
+    const sy = Math.min(src.h - 1, Math.floor(yy * src.h / nh));
+    for (let xx = 0; xx < nw; xx++) {
+      const sx = Math.min(src.w - 1, Math.floor(xx * src.w / nw));
+      const rgb = SAM_PALETTE_RGB[clut[Math.min(src.data[sy*src.w+sx], slots-1)] & 0x7f];
+      cctx.fillStyle = `rgb(${(rgb>>16)&255},${(rgb>>8)&255},${rgb&255})`;
+      cctx.fillRect((nb.x1+xx)*zoom, (nb.y1+yy)*zoom, zoom, zoom);
+    }
+  }
+  drawSelBoxRect(nb, true);
+}
+
+// Commit the resize: clear the old area, scale the source into the new bounds
+function commitSelResize(x, y) {
+  const nb = selResizeBounds(x, y);
+  const src = selResize.src, ob = selResize.origBounds;
+  pushUndo();
+  for (let yy = ob.y1; yy <= ob.y2; yy++)
+    for (let xx = ob.x1; xx <= ob.x2; xx++)
+      if (xx >= 0 && yy >= 0 && xx < screenW && yy < screenH) pixelBuf[yy*screenW+xx] = bgColor;
+  const nw = nb.x2 - nb.x1 + 1, nh = nb.y2 - nb.y1 + 1;
+  for (let yy = 0; yy < nh; yy++) {
+    const sy = Math.min(src.h - 1, Math.floor(yy * src.h / nh));
+    for (let xx = 0; xx < nw; xx++) {
+      const sx = Math.min(src.w - 1, Math.floor(xx * src.w / nw));
+      const dx = nb.x1 + xx, dy = nb.y1 + yy;
+      if (dx >= 0 && dy >= 0 && dx < screenW && dy < screenH) pixelBuf[dy*screenW+dx] = src.data[sy*src.w+sx];
+    }
+  }
+  selX1 = nb.x1; selY1 = nb.y1; selX2 = nb.x2; selY2 = nb.y2;
+  selResize = null;
+  renderFull();
+  snapSelection();
+  drawSelBox();
+  positionSelToolbar();
 }
 
 // Live preview on cursor canvas for multi-click tools (triangle, curve)
@@ -4089,6 +4185,12 @@ function onMouseDown(e) {
     openTextOverlay(x, y); return;
   }
 
+  // Grab a selection corner handle to scale the selection (M3/M4)
+  if (currentTool === 'select' && selActive && selBuffer) {
+    const corner = selHandleHit(x, y);
+    if (corner) { startSelResize(corner); beginDragCapture(); return; }
+  }
+
   pushUndo();
   isDrawing = true;
   lastX = x; lastY = y;
@@ -4125,6 +4227,7 @@ function onMouseMove(e) {
   const {x, y} = canvasPosFromEvent(e);
   updateStatus(x, y);
   updateMagnifier(x, y);
+  if (selResize) { drawSelResizePreview(selResizeBounds(x, y)); return; }
   if (lintWizStep === 1) lintWizUpdateGuide(y);
 
   // Update gradient angle live while dragging
@@ -4172,6 +4275,9 @@ function onMouseMove(e) {
 
 function onMouseUp(e) {
   const {x, y} = canvasPosFromEvent(e);
+
+  // Finish a selection corner-handle resize
+  if (selResize) { commitSelResize(x, y); return; }
 
   // Gradient fill — execute on mouse release
   if (currentTool === 'grad-fill' && gradDragStart) {
