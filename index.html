@@ -938,8 +938,9 @@ body {
   <div id="screen-tabs" style="display:flex;align-items:center;gap:0;background:var(--bg2);border-bottom:1px solid var(--border);padding:0 8px;flex-shrink:0;height:32px;">
     <div id="tab-0" class="screen-tab active" onclick="switchScreen(0)">Screen 1</div>
     <div id="tab-1" class="screen-tab"        onclick="switchScreen(1)">Screen 2</div>
+    <div id="tab-2" class="screen-tab"        onclick="switchScreen(2)">Screen 3</div>
     <div id="screen-filename" title="Filename of the active screen"></div>
-    <button class="btn" style="margin-left:8px;font-size:10px;padding:2px 8px;" onclick="copyScreenTo(activeScreenIdx===0?1:0)" title="Copy current screen to the other slot">→ Copy to other</button>
+    <button class="btn" style="margin-left:8px;font-size:10px;padding:2px 8px;" onclick="copyScreenTo((activeScreenIdx+1)%screens.length)" title="Copy current screen to the next slot">→ Copy to next</button>
   </div>
   <!-- Sprite bar inserted here by toggleSpriteMode -->
 
@@ -1567,7 +1568,7 @@ function makeScreen(label) {
   };
 }
 
-const screens = [makeScreen('Screen 1'), makeScreen('Screen 2')];
+const screens = [makeScreen('Screen 1'), makeScreen('Screen 2'), makeScreen('Screen 3')];
 let activeScreenIdx = 0;
 
 // All state accessors go through the active screen
