@@ -4053,6 +4053,7 @@ function onMouseDown(e) {
   // Gradient fill — drag to set angle, release to fill
   if (currentTool === 'grad-fill') {
     gradDragStart = { x, y };
+    beginDragCapture();
     return;
   }
 
@@ -4112,6 +4113,9 @@ function onMouseDown(e) {
     }
     dragStart = {x, y}; dragEnd = {x, y};
   }
+  // Capture the drag at the document level so it keeps working when the pointer
+  // leaves the canvas — essential in small windows where the canvas is tiny.
+  if (isDrawing || dragStart) beginDragCapture();
   updateStatus(x, y);
   updateMagnifier(x, y);
 }
@@ -4204,9 +4208,37 @@ function onMouseUp(e) {
 }
 
 function onMouseLeave() {
+  if (_dragCapturing) return;   // a drag is in progress; document listeners keep it alive
   isDrawing = false;
   penLock = false; penLockAxis = null;
   dragStart = null; dragEnd = null;
+}
+
+// ── Document-level drag capture ───────────────────────────
+// While a draw/select/gradient drag is active, forward mouse events from the
+// whole document so the drag continues (and finalises) even when the pointer
+// moves off the canvas — which happens constantly in the small screen windows.
+let _dragCapturing = false;
+function beginDragCapture() {
+  if (_dragCapturing) return;
+  _dragCapturing = true;
+  document.addEventListener('mousemove', onDocDrag, true);
+  document.addEventListener('mouseup',   onDocDrop, true);
+}
+function endDragCapture() {
+  if (!_dragCapturing) return;
+  _dragCapturing = false;
+  document.removeEventListener('mousemove', onDocDrag, true);
+  document.removeEventListener('mouseup',   onDocDrop, true);
+}
+function onDocDrag(e) {
+  if (e.target === mainCanvas) return;   // the canvas's own handler covers on-canvas moves
+  onMouseMove(e);
+}
+function onDocDrop(e) {
+  endDragCapture();
+  if (e.target === mainCanvas) return;   // the canvas's own mouseup covers on-canvas releases
+  onMouseUp(e);
 }
 
 function onWheel(e) {
