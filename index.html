@@ -5116,6 +5116,17 @@ function exportBaseName() {
   return n.replace(/\.[^.]*$/, '') || 'screen';
 }
 
+// Filename for Export SCR — keep the loaded filename verbatim so its original
+// extension is preserved (e.g. "example.scr" exports as "example.scr", a
+// name with no extension stays extensionless). Only when there is no filename
+// (a freshly drawn screen) does it fall back to screen.ssN for the current mode.
+function exportScrName() {
+  const n = S().filename;
+  if (n) return n;
+  const ext = mode === 3 ? 'ss3' : mode === 2 ? 'ss2' : mode === 1 ? 'ss1' : 'ss4';
+  return `screen.${ext}`;
+}
+
 function exportScreen() {
   if (mode === 1) { exportMode1(); return; }
   if (mode === 2) { exportMode2(); return; }
@@ -5181,8 +5192,7 @@ function exportScreen() {
   out[liOff] = 0xff; // terminator
 
   const blob = new Blob([out], { type: 'application/octet-stream' });
-  const ext = mode === 3 ? 'ss3' : 'ss4';
-  downloadBlob(blob, `${exportBaseName()}.${ext}`);
+  downloadBlob(blob, exportScrName());
 }
 
 function exportMode1() {
@@ -5205,7 +5215,7 @@ function exportMode1() {
   for (let i = 0; i < 768; i++) out[6144 + i] = attrBuf[i];
 
   writePaletteAndLI(out, 6912);
-  downloadBlob(new Blob([out], { type: 'application/octet-stream' }), `${exportBaseName()}.ss1`);
+  downloadBlob(new Blob([out], { type: 'application/octet-stream' }), exportScrName());
 }
 
 function exportMode2() {
@@ -5228,7 +5238,7 @@ function exportMode2() {
   for (let i = 0; i < 6144; i++) out[8192 + i] = attrBuf[i];
 
   writePaletteAndLI(out, 14336);
-  downloadBlob(new Blob([out], { type: 'application/octet-stream' }), `${exportBaseName()}.ss2`);
+  downloadBlob(new Blob([out], { type: 'application/octet-stream' }), exportScrName());
 }
 
 // Write the 40-byte palette block and LI records at the given offset
