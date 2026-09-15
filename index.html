@@ -247,9 +247,7 @@ body {
   position: relative;
   overflow: auto;
   background: #111214;
-  display: flex;
-  align-items: flex-start;
-  justify-content: flex-start;
+  /* block layout, not flex: a flex body shifts an overflowing editor sideways */
 }
 .sw-preview { image-rendering: pixelated; display: block; margin: auto; }
 .sw-resize {
@@ -4209,6 +4207,9 @@ function onMouseLeave() {
 }
 
 function onWheel(e) {
+  // In windowed mode the active window's body handles the wheel (this event
+  // also bubbles up to it), so bail here to avoid zooming twice.
+  if (windowedMode) return;
   e.preventDefault();
   if (e.deltaY < 0) zoomStep(1); else zoomStep(-1);
 }
@@ -6951,8 +6952,9 @@ function switchScreen(idx) {
   if (keepPaste) enterPasteMode();
 
   // In windowed mode, move the editing stack into the newly active window and
-  // render the window we just left as a static preview.
-  if (windowedMode) windowMoveEditor(prevIdx, idx);
+  // render the window we just left as a static preview, then fit the canvas to
+  // the newly active window so it shows the whole screen without overflow.
+  if (windowedMode) { windowMoveEditor(prevIdx, idx); fitZoomToActiveWindow(); }
 }
 
 function copyScreenTo(targetIdx) {
@@ -6993,8 +6995,10 @@ function defaultWinState() {
   const wrap = document.getElementById('canvas-wrap');
   const W = Math.max(600, wrap.clientWidth), H = Math.max(400, wrap.clientHeight);
   // Active (screen 0) larger top-left; the other two stacked on the right
-  const bigW = Math.min(560, Math.round(W * 0.6)), bigH = Math.min(460, Math.round(H * 0.8));
-  const smW  = Math.min(320, Math.round(W * 0.34)), smH = Math.round((bigH - 12) / 2);
+  const bigW = Math.min(560, Math.round(W * 0.58)), bigH = Math.min(480, Math.round(H * 0.82));
+  // Small windows wide enough to host a 256-wide screen at zoom 1 (256 + CLUT
+  // strip + margins ≈ 310px) so activating one doesn't force a scrollbar.
+  const smW  = Math.min(360, Math.max(320, Math.round(W * 0.34))), smH = Math.round((bigH - 12) / 2);
   const rx = bigW + 24;
   return [
     { x: 12, y: 12, w: bigW, h: bigH },
@@ -7022,6 +7026,12 @@ function buildScreenWindows() {
     win.querySelector('.sw-titlebar').addEventListener('pointerdown', e => startSwGesture(e, i, 'move'));
     // Resize by corner handle
     win.querySelector('.sw-resize').addEventListener('pointerdown', e => startSwGesture(e, i, 'resize'));
+    // Mouse-wheel zoom anywhere in the active window (and stop the body scrolling)
+    win.querySelector('.sw-body').addEventListener('wheel', e => {
+      if (i !== activeScreenIdx) return;
+      e.preventDefault();
+      if (e.deltaY < 0) zoomStep(1); else zoomStep(-1);
+    }, { passive: false });
   }
   _swBuilt = true;
 }
@@ -7200,7 +7210,10 @@ function fitZoomToActiveWindow() {
   const win = document.getElementById('sw-win-' + activeScreenIdx);
   if (!win) { fitZoom(); return; }
   const body = win.querySelector('.sw-body');
-  const zx = Math.floor((body.clientWidth  - 24) / screenW);
+  // Leave room for the 10px canvas margins and the CLUT indicator strip (32px
+  // wide, scaled by zoom) that sits to the right of the canvas.
+  const clutW = ((mode === 3) ? 4 : 16) * 2;   // internal px, then × zoom
+  const zx = Math.floor((body.clientWidth  - 24) / (screenW + clutW));
   const zy = Math.floor((body.clientHeight - 24) / screenH);
   zoom = Math.max(1, Math.min(8, Math.min(zx, zy)));
   resizeCanvases(); renderFull(); updateGrid();
