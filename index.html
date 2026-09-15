@@ -250,6 +250,9 @@ body {
   /* block layout, not flex: a flex body shifts an overflowing editor sideways */
 }
 .sw-preview { image-rendering: pixelated; display: block; margin: auto; }
+/* hidden must win over the display:block above (the active window hides its
+   preview and shows the live editor instead) */
+.sw-preview[hidden] { display: none !important; }
 .sw-resize {
   position: absolute;
   right: 0; bottom: 0;
