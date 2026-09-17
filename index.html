@@ -211,6 +211,8 @@ body {
 /* ── WINDOWED MULTI-SCREEN MODE ── */
 .screen-window {
   position: absolute;
+  z-index: 1;            /* own stacking context so the resize handle (z-index:6)
+                            stays within this window and can't paint over others */
   background: var(--bg2);
   border: 1px solid var(--border2);
   border-radius: 6px;
