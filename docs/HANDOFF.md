@@ -260,15 +260,16 @@ side 0). `mgtBuildBAM()` builds a usage bitmap by scanning all directory entries
 The entire application is `index.html` — a single HTML file with inline CSS and JavaScript.
 No build step, no npm, no external dependencies. This was a deliberate portability choice.
 
-File size: ~240KB, ~6,160 lines, 197 functions.
+File size: ~300KB, ~7,490 lines, ~268 functions.
 
-### 6.2 Two-Screen System
+### 6.2 Three-Screen System
 
 All per-screen state is encapsulated in a `Screen` object created by `makeScreen()`:
 
 ```javascript
 {
-  label,          // 'Screen 1' or 'Screen 2'
+  label,          // 'Screen 1' / 'Screen 2' / 'Screen 3'
+  filename,       // loaded/saved filename, or null (shown by the tabs; drives Export SCR)
   mode,           // 1, 2, 3, or 4
   pixelBuf,       // Uint8Array(512 * 192) — always max-size
   attrBuf,        // Uint8Array(32 * 192)
@@ -277,14 +278,15 @@ All per-screen state is encapsulated in a `Screen` object created by `makeScreen
   lineInterrupts, // Array of {line, slot, palIdx}
   fgColor,        // CLUT slot index
   bgColor,        // CLUT slot index
-  undoStack,      // Array of {pixelBuf, attrBuf, clut, lineInterrupts} snapshots
+  undoStack,      // Array of {buf, attr, clut, li} snapshots
   redoStack,
 }
 ```
 
-`screens[0]` and `screens[1]` hold the two screen objects. `activeScreenIdx` tracks which
-is active. Global state variables (`pixelBuf`, `mode`, `clut`, etc.) are proxied to the
-active screen via `Object.defineProperties()`:
+`screens[0..2]` hold the three screen objects (extended from two — the code was already
+generic over the `screens` array; only the HTML tabs and the copy button assumed two).
+`activeScreenIdx` tracks which is active. Global state variables (`pixelBuf`, `mode`, `clut`,
+etc.) are proxied to the active screen via `Object.defineProperties()`:
 
 ```javascript
 Object.defineProperties(window, {
@@ -294,7 +296,9 @@ Object.defineProperties(window, {
 });
 ```
 
-This allows all existing code to use global variable names without modification.
+This allows all existing code to use global variable names without modification. `renderFull` /
+`renderFullAttr` render the **active** screen via these proxies; `renderScreenToImageData(scr)`
+is a standalone renderer for an *arbitrary* screen object (used by the windowed-mode previews).
 
 ### 6.3 Rendering Pipeline
 
@@ -327,6 +331,22 @@ draw in the foreground colour.
 Multi-click tools (Triangle, Bezier curve) use a `multiClick` state machine. Each click
 adds a point; the final click completes the shape. Escape cancels.
 
+**Pencil direction lock:** while the left button is held with the Pencil, `penLock` constrains
+the stroke to horizontal or vertical. The axis (`penLockAxis`) is chosen from the first movement
+relative to `penOriginX/Y` and released on mouse-up. Right-button drags stay freehand.
+
+**Per-tool cursors:** `TOOL_CURSORS` maps tools to custom SVG data-URI cursors (pencil, brush,
+fill bucket, eraser, eyedropper; text = I-beam; shapes = crosshair). `applyToolCursor()` sets
+`mainCanvas.style.cursor`; called on tool change and at startup.
+
+**Document-level drag capture (important).** The canvas mouse handlers live on `mainCanvas`, so
+a drag that leaves the canvas would otherwise stop firing (and `mouseleave` aborted it) — a real
+problem in the small windowed-mode canvases. On drag start, `beginDragCapture()` adds
+capture-phase `mousemove`/`mouseup` listeners on `document` (`onDocDrag` / `onDocDrop`) that
+forward to `onMouseMove` / `onMouseUp` when the event target is not the canvas (coordinates are
+clamped by `canvasPosFromEvent`). `onMouseLeave` bails while `_dragCapturing`. This keeps
+selection, drawing and gradient drags alive off-canvas.
+
 ### 6.5 Selection and Clipboard
 
 `selBuffer` holds the copied pixel data:
@@ -345,7 +365,25 @@ time of copy is stored as `maskColor`. During paste, pixels matching `maskColor`
 skipped, leaving the destination canvas unchanged.
 
 `enterPasteMode()` activates the floating paste preview on the cursor canvas.
-`pasteClipAt(cx, cy)` commits the paste to `pixelBuf`.
+`pasteClipAt(cx, cy)` commits the paste to `pixelBuf`. A floating paste **carries across screen
+switches**: `selBuffer` is global, and `switchScreen()` re-arms paste mode on the new screen so
+the clip can be placed there (rendered with the destination screen's CLUT).
+
+**Selection toolbar operations** (all scoped to the selection rectangle):
+- `swapFgBgInSelection()` — swaps FG/BG (slot swap in M3/M4; ink/paper swap per cell in M1/M2).
+- `replaceBgFgInSelection()` — selection-scoped version of the global `replaceColour()` (BG→FG).
+- `applyScale(level)` / scale panel — nearest-neighbour resample of `selBuffer` → `enterPasteMode`.
+- `applyAntiAlias(level)` — Low/Med/High edge softening. For each edge pixel, blend toward the
+  8-neighbour mean and snap to the nearest **existing** CLUT colour; if the nearest is still the
+  original (no suitable intermediate) the pixel is unchanged. Edits are computed against the
+  unmodified pixels then applied (no cascade). M3/M4 only.
+
+**Interactive corner scale handles** (M3/M4, `selResize` state). `drawSelBoxRect(b, withHandles)`
+draws square handles at the four corners when the Select tool is active. `selHandleHit(x,y)`
+hit-tests a corner at mousedown; `startSelResize(corner)` records the anchored opposite corner
+and a copy of `selBuffer`. Dragging shows a live nearest-neighbour scaled preview
+(`drawSelResizePreview`); `commitSelResize()` clears the old bounds to `bgColor`, scales the
+source into the new bounds, updates `selX1..Y2`, and re-snapshots the selection.
 
 ### 6.6 Undo System
 
@@ -414,6 +452,62 @@ transparent. CLUT slot 0 is treated as transparent when building masks.
 the same bytes (the file type byte 0x7B is the same as the SPOKE magic check byte). This
 means a `.s` file IS also a valid SAMDOS CODE file.
 
+### 6.10 Windowed Multi-Screen Mode ("see all, edit one")
+
+Toggled by `toggleWindowedMode()` (default off, so the classic tabbed layout is unchanged and
+all windowed hooks are guarded by `windowedMode`). Three `.screen-window` frames are created
+inside `#canvas-wrap` by `buildScreenWindows()`, one per screen, each with a titlebar (drag +
+activate), a body, a `.sw-preview` canvas, and a resize handle.
+
+- **The active window hosts the real editor.** `windowMoveEditor(prev, cur)` moves the shared
+  `#canvas-container` (main-canvas + overlays) into the active window's body via `appendChild`
+  (one DOM op, preserves all listeners), hides that window's preview, and renders the vacated
+  window's preview. `switchScreen()` calls it (guarded) and then `fitZoomToActiveWindow()`.
+- **Inactive windows show a live preview** rendered by `renderScreenPreview(idx)` →
+  `renderScreenToImageData(screens[idx])` (mirrors `renderFull`/`renderFullAttr` incl. LI),
+  fitted to the body.
+- **Drag/resize:** pointer gestures via `startSwGesture` / `onSwGestureMove`; geometry kept in
+  `winState[]`. Clicking a window activates it (frame `pointerdown`; the gesture handlers must
+  NOT `stopPropagation`, or activation is lost).
+- **Wheel zoom:** handled on the active window's body (`onWheel` bails when windowed to avoid
+  double-zoom). `fitZoomToActiveWindow()` accounts for the CLUT strip width.
+
+Gotchas fixed and worth remembering:
+- **Stacking:** the resize handle is `z-index:6`; every `.screen-window` needs its own
+  `z-index` (base `1`, active `5`) so an inactive window forms a stacking context and its handle
+  can't paint over the active window.
+- **Hidden preview:** `.sw-preview` has `display:block`, which overrides the `hidden` attribute,
+  so `.sw-preview[hidden]{display:none!important}` is required or the active window shows two
+  stacked views.
+- **`.sw-body` is block, not flex** — a flex body shifts an overflowing editor sideways and
+  inflates `scrollWidth`.
+
+### 6.11 Canvas Adjustments (palette-space)
+
+`Adjust` (titlebar) opens a live panel applying brightness/contrast/gamma/saturation/RGB to the
+**current screen** using the wizard's `iwAdjust()` maths. Because the canvas is paletted, it
+works in palette space: `adjustPalIndex(idx, params)` pushes each CLUT and line-interrupt colour
+through `iwAdjust` and snaps to `nearestSAMIndex()`. `openAdjust()` snapshots the original
+palette; sliders preview via `applyAdjToLive()` (recomputed from the snapshot, never cumulative);
+`adjApply()` restores then `pushUndo()` then re-applies for a clean one-step undo. Pixel data is
+never touched. Neutral sliders are an exact identity for all 128 entries.
+
+### 6.12 CLUT Usage Feedback
+
+`updateClutUsage()` scans the canvas (indexed slot values for M3/M4; effective ink/paper slot
+for M1/M2) and, for each swatch, sets a left-edge black/white **usage bar** (white height =
+% of pixels using that slot, quantised up to 5% steps) plus a tooltip with the exact count, and
+toggles an `unused` class (a `::before` diagonal cross-out) when the count is zero. Called from
+`renderFull` (both paths), `onMouseUp` (freehand strokes use the incremental `renderRegion`, so
+the full render doesn't run per stroke), and `buildClutGrid`.
+
+### 6.13 Copy Palette Between Screens
+
+`openPaletteCopy()` builds a two-step modal: pick From/To screens, then `palcopyPreview()` shows
+both palettes as colour blocks (`palcopySwatches`), and `palcopyConfirm(from, to)` copies `clut`
+and `clut3` in place. The overwrite is pushed to the **target** screen's undo stack (or
+`pushUndo()` if the target is active); pixel data and LI are untouched.
+
 ---
 
 ## 7. Known Issues and Outstanding Work
@@ -443,6 +537,26 @@ could produce a fragmented disk image.
 `toggleSpriteMode` must be updated accordingly.
 
 ### 7.2 Missing Features / Planned Work
+
+> Implemented since the original handoff (see §6.10–6.13 and the git log): third screen +
+> windowed multi-screen mode, canvas Adjustments, selection FG/BG swap, BG→FG, numeric Scale,
+> interactive corner scale handles, anti-alias, Copy Palette between screens, CLUT usage bars +
+> unused cross-out, adjustable grid size (+ magnifier grid), per-tool cursors, pencil H/V lock,
+> document-level drag capture, default Fit on open/import, and Export SCR preserving the loaded
+> extension. Node.js is now installed for `node --check` (see §9).
+
+**Scope limits of the new tools (worth knowing):**
+- Anti-alias and interactive corner scale handles are **M3/M4 only** (attribute modes have no
+  per-pixel intermediate colours; the numeric Scale panel still works in M1/M2).
+- Anti-alias and Adjustments use the **base CLUT** and do not account for per-row line-interrupt
+  colours — best-effort in LI-heavy areas.
+- Adjustments **shift** the existing palette rather than re-quantising, so they change the look
+  but cannot add tonal detail; a strong adjustment may collapse two near colours onto one entry.
+  A "re-quantise the current canvas" mode would be a separate, larger feature.
+- Export SCR keeps the loaded filename's extension **independent of the current mode**, so a
+  mode-converted screen still offers the original extension.
+- Windowed mode and Sprite Editor mode have not been tested together (sprite mode manipulates
+  the classic `canvas-column`).
 
 **Gamesmaster sprite — pixel-shift variant** — The PDF spec mentions that if a sprite
 allows pixel X movement, "a second set of graphics and masks, shifted right by 1 pixel,
@@ -508,22 +622,30 @@ When making changes, verify:
 - [ ] Right-click drag draws in BG colour (not FG) throughout the drag
 - [ ] Line interrupt preview matches rendered output exactly
 - [ ] Undo/redo works for pencil, flood fill, paste, line interrupt add/remove
-- [ ] Screen switch preserves both screens' state
+- [ ] Screen switch preserves all three screens' state
 - [ ] MGT save: open a disk image, save a screen, re-open the disk image and load it back
 - [ ] GM sprite: export `.s`, load it in SimCoupe or compare bytes against a reference file
 - [ ] GM sprite import: load `bird.s`, verify grid is 19×14, 4 frames placed correctly
 - [ ] Sprite preview: animation plays through all full blocks only (no partial blocks)
 - [ ] CLUT uniqueness removed: clicking the same palette colour twice into two different
       slots should work
+- [ ] Windowed mode: toggle on, drag/resize windows, click to switch the editor, wheel-zoom the
+      active window; the classic layout returns on toggle off
+- [ ] Selection drag started on the canvas but released **off** it still finalises (drag capture)
+- [ ] Corner scale handles resize + scale the selection (M3/M4); Adjust panel previews and undoes
+- [ ] CLUT usage bars/cross-out update after drawing and on screen switch
+- [ ] Copy Palette copies the CLUT to another screen (undoable on the target)
+- [ ] Export SCR keeps the loaded filename's extension
 
 ---
 
 ## 9. Development Environment
 
-The project was developed iteratively in Claude.ai chat with file editing via the bash
-tool and Filesystem MCP (for reading local SAM Coupé source repositories).
+The project is developed as a single `index.html`; there is exactly one `<script>` block, which
+is what makes the extract-and-check workflow safe. **Node.js is installed** (via winget) for
+`node --check`; there is still no build step or dependency.
 
-**Syntax checking workflow:**
+**Syntax checking workflow** — extract the one script block and check it:
 
 ```bash
 python3 -c "
@@ -536,6 +658,11 @@ with open('/tmp/check.js', 'w') as f:
 "
 node --check /tmp/check.js
 ```
+
+`node --check` cannot read `index.html` directly (it's HTML, not JS) — always extract first.
+Loading the page and watching the browser console catches the same errors. Pure algorithm
+changes (palette maths, scaling, anti-alias, usage %) are worth a small standalone Node unit
+test that replicates the function, since they're easy to get subtly wrong.
 
 **Reference repositories consulted:**
 - `SAMCoupe-GITs/samdos/` — SAMDOS assembly source (disk format, directory structure)

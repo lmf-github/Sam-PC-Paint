@@ -13,18 +13,31 @@ browser.
 
 - **All four SAM screen modes** — M1 (Spectrum-compatible), M2 (8×1 attribute), M3 (512×192
   4-colour), M4 (256×192 16-colour)
-- **Full drawing toolset** — Pencil, Brush, Line, Rectangle, Ellipse, Triangle, Bezier curve,
-  Flood fill, Gradient fill, Eraser, Eyedropper, Select/cut/copy/paste (with mask mode),
-  Text tool
+- **Full drawing toolset** — Pencil (with a hold-to-draw horizontal/vertical lock), Brush,
+  Line, Rectangle, Ellipse, Triangle, Bezier curve, Flood fill, Gradient fill, Eraser,
+  Eyedropper, Select/cut/copy/paste (with mask mode), Text tool — each with a distinct cursor
+- **Rich selection tools** — FG/BG swap and BG→FG replace within the selection, numeric X/Y
+  scale, interactive corner **scale handles** (drag to resize and scale the contents),
+  rotate, and **anti-alias** (Low/Med/High edge softening using existing palette colours)
+- **Adjustments** — apply brightness, contrast, gamma, saturation and per-channel RGB to the
+  image already on the canvas (works in palette space, non-destructive, undoable)
 - **128-colour SAM palette** with HSV gradient view
-- **CLUT editor** with per-slot reassignment and per-scanline indicator strip
+- **CLUT editor** with per-slot reassignment, per-scanline indicator strip, a per-slot
+  black/white **usage bar** (how much of the canvas uses each colour) and a cross-out on
+  unused slots, and **Copy Palette** between screens
 - **Line interrupts** — add, edit, remove; live preview; CLUT indicator strip
-- **Image import wizard** — scale/fit, adjust, quantise, dither, LI optimise
+- **Image import wizard** — scale/fit, adjust, quantise, dither, LI optimise; large fit-to-pane
+  preview
 - **MGT/DSK disk browser** — load and save SCREEN$ files directly to disk images
 - **Sprite Editor mode** — configurable grid overlay, animation preview
 - **Gamesmaster sprite format** — import and export `.s` sprite files, save to disk
-- **Two independent screen buffers** — copy/paste between them; each tracks its own filename,
-  shown beside the screen tabs
+- **Three independent screen buffers** — copy/paste and copy-palette between them; each tracks
+  its own filename, shown beside the screen tabs
+- **Windowed workspace** — show all three screens as draggable, resizable windows and edit the
+  one you click (the others show a live preview)
+- **Adjustable grid** — toggle on, then step the cell size (1×1, 2×2, …); shown on the canvas
+  and in the magnifier
+- **Magnifier** — 20× view with a yellow cursor crosshair and the configured grid
 - **Undo/redo** — 80 steps per screen
 
 ---

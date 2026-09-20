@@ -82,6 +82,20 @@ displays the SAM palette colour assigned to that slot.
 - **Right-click** a CLUT swatch — set as the **background** colour
 - **Shift-click** a CLUT swatch — reassign that slot by clicking any colour in the full palette below
 
+Each swatch also carries **usage feedback**:
+
+- A thin **black/white bar** down the left edge shows how much of the canvas uses that slot —
+  white fills from the bottom to the percentage of pixels using it (a full-screen black
+  Mode 4 gives slot 0 a full white bar). The bar is quantised to 5% steps and rounds up, so
+  any non-zero usage shows at least a small bar; hover for the exact pixel count and percentage.
+- A slot used by **zero** pixels is crossed out with a black diagonal line; the line disappears
+  as soon as the colour is used.
+
+**Copy Palette…** (button under the CLUT grid) opens a dialog to copy one screen's palette to
+another: choose **From** and **To** screens, click OK to preview both palettes as colour
+blocks (source, and the target that will be overwritten), then Confirm. Only the CLUT is
+copied — pixel data and line interrupts are unchanged, and it is undoable on the target screen.
+
 The **CLUT indicator strip** to the right of the canvas shows a vertical bar for each slot,
 colour-coded per scanline. White tick marks show exactly where line interrupts fire on each slot.
 This gives an at-a-glance view of how many distinct colours are active at each position
@@ -129,7 +143,15 @@ Select tools from the left toolbar or use keyboard shortcuts:
 | Select | S | Drag to select rectangular region |
 | Text | T | Click canvas to place text |
 
-**Left-click** draws with FG colour; **right-click** draws with BG colour.
+**Left-click** draws with FG colour; **right-click** draws with BG colour. Each tool has its own
+mouse cursor (a pencil, brush, bucket, eraser and eyedropper for those tools; a crosshair for
+the shape tools) so the active tool is obvious at a glance.
+
+### Pencil direction lock
+
+While you hold the **left** button with the Pencil, the stroke is locked to horizontal or
+vertical — the axis is chosen from your first movement and released when you let go. This lets
+you draw clean straight runs without a steady hand. Right-button pencil drags stay freehand.
 
 ### Three-click tools (Triangle, Bezier Curve)
 
@@ -164,14 +186,26 @@ system fonts, size, bold and italic. An 8×8 SAM ROM-style font is available as 
    - **✂ Cut** — removes the selection and places it on the clipboard
    - **⧉ Copy** — copies the selection to clipboard
    - **⧉ Mask** — copies with the current **BG colour as transparent** — when pasted, pixels matching the BG colour are not written, letting the destination show through
+   - **⇄ FG/BG** — swaps the FG and BG colours within the selection only
+   - **BG→FG** — replaces every BG-colour pixel with the FG colour, within the selection only
    - **↻ Rotate** — opens rotation controls (±1°, ±45°, apply/cancel)
+   - **⤢ Scale** — opens a panel to scale the selection by X/Y percentage (5% steps); the
+     scaled copy floats so you can click to place it
+   - **◣ AA** — anti-aliases the selection edges (Low/Med/High), softening hard edges using
+     only colours already in the palette (M3/M4 only)
    - **✕** — clears the selection
 
 3. After copying, a floating preview follows the cursor. Click to place the pasted content.
    Press **Escape** to cancel a paste in progress.
 
-The clipboard persists when switching between Screen 1 and Screen 2, making it easy to copy
-elements from one screen to the other.
+**Interactive scale handles (M3/M4):** an active selection shows square handles at its four
+corners. Drag a corner to resize the selection — the opposite corner stays anchored and the
+contents scale to fill the new box (nearest-neighbour, so no new colours are introduced), with
+a live preview while you drag.
+
+The clipboard **and a floating paste both persist when you switch screens**, so you can select
+→ copy (or scale) on one screen, switch to another, and place the content there — the pasted
+area is drawn with the destination screen's palette.
 
 ---
 
@@ -185,26 +219,60 @@ Buttons in the left panel below the tools:
 
 ---
 
-## Zoom and Navigation
+## Adjustments (current canvas)
 
-- **− / +** buttons in the titlebar change zoom level
-- **Fit** — zooms to fit the canvas in the available area
-- **Mouse wheel** — zooms in/out
-- The **Magnifier** panel (top of right panel) shows a 20× zoom around the cursor position
+Click **Adjust** in the titlebar to open a panel that applies the same controls as the image
+import wizard — **Brightness, Contrast, Gamma, Saturation** and per-channel **Red/Green/Blue**
+offsets — to the image already on the canvas. Sliders preview live; **Apply** commits (one undo
+step), **Reset** zeroes the sliders, **Cancel** / **Esc** restore the original.
+
+Because the canvas is palette-based, the adjustment works in *palette space*: each CLUT and
+line-interrupt colour is pushed through the maths and snapped to the nearest SAM palette entry.
+Pixel data is never touched, so it is fully non-destructive. Note it shifts the existing
+colours rather than re-quantising, so it changes the look but can't add tonal detail a fresh
+import would.
 
 ---
 
-## Two Screens
+## Zoom and Navigation
 
-The editor maintains **two independent screen buffers** — Screen 1 and Screen 2 — each with
-its own pixel data, CLUT, mode, line interrupts, and undo/redo history.
+- **− / +** buttons in the titlebar change zoom level
+- **Fit** — zooms to fit the canvas in the available area. Opening or importing a screen fits
+  automatically, so it fills the view rather than staying at 1×.
+- **Mouse wheel** — zooms in/out
+- The **Magnifier** panel (top of right panel) shows a 20× zoom around the cursor position, with
+  a **yellow** cursor crosshair and, when the grid is on, the configured pixel grid.
 
-Click the **Screen 1** or **Screen 2** tab above the canvas to switch. The canvas, CLUT panel,
-and line interrupt list all update instantly.
+### Grid
 
-The **→ Copy to other** button copies the entire current screen (pixels, CLUT, mode, line
-interrupts) to the other slot. The clipboard is shared between screens, so select → copy on
-Screen 1, switch to Screen 2, and paste to transfer graphics.
+Toggle the **Grid** button in the titlebar. When it is on, a **−  N×N  +** stepper appears
+next to it: use − / + to change the grid cell size by one pixel at a time (1×1, 2×2, 3×3, …).
+The grid draws on the canvas and in the magnifier, and is suppressed only when a cell would be
+smaller than about 3px on screen. The yellow attribute-cell grid for Modes 1/2 is separate and
+always reflects the hardware cells.
+
+---
+
+## Screens and Windowed Mode
+
+The editor maintains **three independent screen buffers** — Screen 1, 2 and 3 — each with its
+own pixel data, CLUT, mode, line interrupts, filename and undo/redo history.
+
+Click the **Screen 1 / 2 / 3** tab above the canvas to switch. The canvas, CLUT panel, line
+interrupt list and filename all update instantly. The **→ Copy to next** button copies the
+entire current screen (pixels, CLUT, mode, line interrupts) to the next slot in turn. Use
+**Copy Palette…** (in the CLUT panel) to copy just the palette between any two screens.
+
+### Windowed mode
+
+Click **Windows** in the titlebar to arrange all three screens as **draggable, resizable
+windows** — "see all, edit one":
+
+- Drag a window by its titlebar; resize it from the bottom-right corner.
+- The window you click becomes the **active editing target** (tools, CLUT, magnifier and the
+  mouse wheel act on it); the other two windows show a **live preview** of their screen.
+- The mouse wheel zooms the active window, and selecting a window fits its screen to the window.
+- Click **Windows** again to return to the classic tabbed layout.
 
 ---
 
@@ -290,8 +358,9 @@ at scanline boundaries:
 - **Colours per band** — how many CLUT slots each band can use (up to 16)
 - **Shared slots** — CLUT slots that remain constant across all bands (0 = all slots free
   to change; useful for locking a background colour)
-- **Min improvement** — suppresses LI records for colour changes that are perceptually
-  insignificant. Higher values use fewer interrupts. 5% is a good starting point.
+- **Min improvement (1–10%)** — suppresses LI records for colour changes that are perceptually
+  insignificant. Higher values use fewer interrupts. 5% is a good starting point. (Values
+  outside 1–10 had no useful effect, so the slider is limited to that range.)
 
 The stats line shows how many LI records will be generated and whether the 127-record hardware
 limit is exceeded. If the limit is hit, increase band height or reduce colours per band.
@@ -314,11 +383,13 @@ the mode from the file extension or prompts if ambiguous.
 
 ## Exporting
 
-- **Export SCR** — saves the current screen as a native SAM SCREEN$ binary. The correct
-  extension (`.ss1`–`.ss4`) is added automatically based on the active mode. Line interrupts
-  are included and truncated to 127 records if necessary.
+- **Export SCR** — saves the current screen as a native SAM SCREEN$ binary. The download name
+  **reuses the loaded/saved filename verbatim**, keeping its original extension — a screen
+  imported as `example.scr` exports as `example.scr`, and a name with no extension stays
+  extensionless. Only a freshly drawn screen with no filename falls back to `screen.ssN` for the
+  current mode. Line interrupts are included and truncated to 127 records if necessary.
 - **PNG** — exports a rendered PNG image of the canvas at current zoom, with line interrupts
-  applied. Useful for previews and sharing.
+  applied (named after the current screen). Useful for previews and sharing.
 
 ---
 
