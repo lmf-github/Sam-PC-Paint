@@ -238,6 +238,11 @@ body {
 .sc-rules input { margin: 0; cursor: pointer; }
 .sc-advice { font-size: 10px; color: var(--text2); line-height: 1.45; margin-top: 8px; border-top: 1px solid var(--border2); padding-top: 8px; }
 .sc-advice b { font-weight: 600; }
+.sc-fixbar { flex-direction: column; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border2); }
+.sc-fixbar #sc-fix-msg { font-size: 10px; color: var(--text2); font-family: var(--font-mono); line-height: 1.4; }
+.sc-fix-btns { display: flex; gap: 6px; }
+.sc-fix-btns .btn { flex: 1; }
+#sc-fix-btn:disabled { opacity: 0.5; cursor: default; }
 #clut-indicator {
   position: absolute;
   top: 0;
@@ -979,6 +984,15 @@ body {
   <div class="sc-gutter-hint" id="sc-gutter-hint">Bar = cost per line · red dot = error line</div>
   <div class="sc-summary" id="sc-summary"></div>
   <div class="sc-advice" id="sc-advice"></div>
+  <button class="btn" id="sc-fix-btn" onclick="scrollFixPreview()" style="width:100%;margin-top:10px;"
+    title="Preview automatic fixes for the checked lines (snap Mode 4 edges to even x; flatten Mode 2 three-colour windows)">Fix… (preview)</button>
+  <div class="sc-fixbar" id="sc-fixbar" style="display:none;">
+    <div id="sc-fix-msg"></div>
+    <div class="sc-fix-btns">
+      <button class="btn success" id="sc-fix-apply" onclick="scrollFixApply()">Apply</button>
+      <button class="btn" id="sc-fix-cancel" onclick="scrollFixCancel()">Cancel</button>
+    </div>
+  </div>
 </div>
 
 <!-- ADJUSTMENTS PANEL — recolours the current image's palette live -->
@@ -2523,6 +2537,9 @@ let scrollCheckActive = false, scrollSpeed = 2, scrollLines = null, scrollResult
 // Which overlays are drawn. Error/edge rules default on; the cost-heat tint and the
 // seam hint default off so they don't bury the problems that need fixing.
 let scShowS1 = false, scShowM41 = true, scShowM42 = true, scShowM21 = true, scShowG1 = false;
+// Fix preview state: fixes are applied to the live buffers, with a backup kept so the
+// preview can be cancelled; Apply makes it a single undo step.
+let scrollPreviewActive = false, scrollPreviewChanged = null, scrollFixBackup = null, scrollPreFix = null;
 
 const scMod = (a, n) => ((a % n) + n) % n;
 
@@ -2730,6 +2747,12 @@ function renderScrollOverlay() {
       sctx.fillRect(256 * z - tick, L.y * z, tick, z);
     }
   }
+
+  // Fix preview: green markers on the pixels the pending fix would change.
+  if (scrollPreviewActive && scrollPreviewChanged) {
+    sctx.fillStyle = 'rgba(60,230,90,0.55)';
+    for (const [x, y] of scrollPreviewChanged) sctx.fillRect(x * z, y * z, z, z);
+  }
 }
 
 function renderScrollGutter() {
@@ -2827,15 +2850,20 @@ function toggleScrollCheck() {
     scrollRuleToggle();   // sync overlay checkboxes → state
     scrollRecompute();
   } else {
+    if (scrollPreviewActive) scrollFixCancel();   // discard any pending preview
     sctx.clearRect(0, 0, scrollCanvas.width, scrollCanvas.height);
   }
 }
 function scrollSetSpeed(v) {
+  if (scrollPreviewActive) scrollFixCancel();   // don't carry a stale preview across settings
   scrollSpeed = Math.max(1, Math.min(8, +v || 2));
   document.getElementById('sc-speed-v').textContent = scrollSpeed + ' px';
   scrollRecompute();
 }
-function scrollSetLines(str) { scrollLines = scrollParseLines(str); scrollRecompute(); }
+function scrollSetLines(str) {
+  if (scrollPreviewActive) scrollFixCancel();
+  scrollLines = scrollParseLines(str); scrollRecompute();
+}
 // Drag the panel by its title bar so it doesn't sit over the zoom window.
 function scrollPanelDragStart(e) {
   const panel = document.getElementById('scroll-panel');
@@ -2859,6 +2887,120 @@ function scrollRuleToggle() {
   scShowM21 = document.getElementById('sc-r-m21').checked;
   scShowG1  = document.getElementById('sc-r-g1').checked;
   renderScrollOverlay();   // only the drawing changes — no need to re-analyse
+}
+
+// ── Auto-fix ───────────────────────────────────────────────
+// Mode 4: snap each odd-x colour edge (byte whose two pixels differ) to an even x by
+// extending the adjacent run by one pixel. Decisions read the original row so they don't
+// cascade. Returns the number of bytes changed.
+function scrollFixM4(lines) {
+  let n = 0;
+  for (const y of lines) {
+    const row = y * 256, orig = pixelBuf.slice(row, row + 256);
+    for (let i = 0; i < 128; i++) {
+      const L = orig[2 * i], R = orig[2 * i + 1];
+      if (L === R) continue;                           // not an odd-x edge
+      const nextL = orig[scMod(2 * i + 2, 256)], prevR = orig[scMod(2 * i - 1, 256)];
+      if (nextL === R) pixelBuf[row + 2 * i] = R;      // extend the right run leftward
+      else if (prevR === L) pixelBuf[row + 2 * i + 1] = L;  // extend the left run rightward
+      else pixelBuf[row + 2 * i + 1] = L;              // isolated 1-px feature: collapse
+      n++;
+    }
+  }
+  return n;
+}
+function scrollSlotForColour(c) { for (let s = 0; s < 16; s++) if (clut[s] === c) return s; return 0; }
+// Mode 2: flatten any 8-px window that would show 3+ colours down to its two commonest,
+// repainting the minority pixels to the most common colour. A few passes per line settle
+// knock-on effects. Returns the number of pixels repainted.
+function scrollFixM2(lines, p) {
+  let n = 0;
+  for (const y of lines) {
+    for (let pass = 0; pass < 4; pass++) {
+      const v = scrollLineValues(y);
+      const bad = scM2BadWindows(v, p);
+      if (!bad.length) break;
+      for (const x0 of bad) {
+        const cnt = new Map();
+        for (let k = 0; k < 8; k++) { const c = v[scMod(x0 + k, 256)]; cnt.set(c, (cnt.get(c) || 0) + 1); }
+        const sorted = [...cnt.entries()].sort((a, b) => b[1] - a[1]);
+        const keep = new Set([sorted[0][0], sorted[1][0]]);
+        const slot = scrollSlotForColour(sorted[0][0]);
+        for (let k = 0; k < 8; k++) {
+          const xx = scMod(x0 + k, 256);
+          if (!keep.has(v[xx])) { setPixel(xx, y, slot); n++; }
+        }
+      }
+    }
+  }
+  return n;
+}
+// Which pixels differ from the backup (by bit, or by their cell's attribute in M1/2).
+function scrollDiffChanged(backup, lines) {
+  const out = [];
+  for (const y of lines) for (let x = 0; x < 256; x++) {
+    const idx = y * 256 + x;
+    let ch = pixelBuf[idx] !== backup.buf[idx];
+    if (!ch && (mode === 1 || mode === 2)) {
+      const ci = (mode === 1 ? Math.floor(y / 8) * 32 : y * 32) + Math.floor(x / 8);
+      ch = attrBuf[ci] !== backup.attr[ci];
+    }
+    if (ch) out.push([x, y]);
+  }
+  return out;
+}
+
+function scrollFixPreview() {
+  if (!scrollResult || (mode !== 2 && mode !== 4) || scrollPreviewActive) return;
+  const lines = scrollLines || scrollParseLines('all');
+  scrollFixBackup = { buf: pixelBuf.slice(), attr: attrBuf.slice() };
+  scrollPreFix = { total: scrollResult.total, bad: scrollResult.badWindows, odd: scrollResult.oddTotal };
+  const n = (mode === 4) ? scrollFixM4(lines) : scrollFixM2(lines, scrollSpeed);
+  if (n === 0) {
+    scrollFixBackup = null; scrollPreFix = null;
+    document.getElementById('sc-fix-msg').textContent = 'Nothing to auto-fix in this band.';
+    scrollShowFixBar('msg');
+    return;
+  }
+  scrollPreviewChanged = scrollDiffChanged(scrollFixBackup, lines);
+  scrollPreviewActive = true;
+  renderFull();                 // shows fixed art; scrollRecompute() re-analyses + redraws overlay
+  const after = scrollResult.total;
+  const errBefore = mode === 4 ? scrollPreFix.odd : scrollPreFix.bad;
+  const errAfter  = mode === 4 ? scrollResult.oddTotal : scrollResult.badWindows;
+  const unit = mode === 4 ? 'stores' : 'cells';
+  const errName = mode === 4 ? 'odd-x' : 'errors';
+  document.getElementById('sc-fix-msg').innerHTML =
+    `<b>${n}</b> fix(es) · cost ${scFmt(scrollPreFix.total)} → <b>${scFmt(after)}</b> ${unit} · ` +
+    `${errName} ${errBefore} → ${errAfter} · ${scrollPreviewChanged.length} px <span style="color:rgba(60,230,90,1)">■</span>`;
+  scrollShowFixBar('preview');
+}
+function scrollFixApply() {
+  if (!scrollPreviewActive) return;
+  const fixed = { buf: pixelBuf.slice(), attr: attrBuf.slice() };
+  pixelBuf.set(scrollFixBackup.buf); attrBuf.set(scrollFixBackup.attr);
+  pushUndo();                                        // original state → undo stack (single step)
+  pixelBuf.set(fixed.buf); attrBuf.set(fixed.attr);
+  scrollExitPreview();
+  renderFull();
+}
+function scrollFixCancel() {
+  if (!scrollPreviewActive) { scrollShowFixBar('hide'); return; }
+  pixelBuf.set(scrollFixBackup.buf); attrBuf.set(scrollFixBackup.attr);
+  scrollExitPreview();
+  renderFull();
+}
+function scrollExitPreview() {
+  scrollPreviewActive = false; scrollPreviewChanged = null; scrollFixBackup = null; scrollPreFix = null;
+  scrollShowFixBar('hide');
+}
+function scrollShowFixBar(state) {   // 'hide' | 'preview' | 'msg'
+  const bar = document.getElementById('sc-fixbar');
+  const apply = document.getElementById('sc-fix-apply');
+  const fixBtn = document.getElementById('sc-fix-btn');
+  bar.style.display = (state === 'hide') ? 'none' : 'flex';
+  apply.style.display = (state === 'preview') ? '' : 'none';   // Cancel stays to dismiss a message
+  if (fixBtn) fixBtn.disabled = (state === 'preview');
 }
 
 function updateMagnifier(cx, cy) {

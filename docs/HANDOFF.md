@@ -569,8 +569,18 @@ JS ports those formulas verbatim and reproduces every §5 figure.
   (`updateScrollSummary`: cost/frame, M4-2 and seam counts, the §1 scan-line estimate, % of the
   312-line frame, worst lines), and a context-specific **advice** block (`updateScrollAdvice`) that
   explains each highlight present and how to fix it.
-- **Scope:** S1 (cost gutter + heat), S2 (flat lines = 0), M4-1, M4-2, M2-1, G1 and the R1 hint are
-  all implemented. Line interrupts mid-line aren't modelled (matches the renderer — see handover §7).
+- **Auto-fix (preview-gated, both modes):** the **Fix… (preview)** button runs `scrollFixPreview()`,
+  which applies the fixes to the live buffers over a backup and shows cost/error before→after plus
+  green markers on the changed pixels (`scrollDiffChanged`, drawn in `renderScrollOverlay`).
+  `scrollFixApply()` commits as a single undo step (restore backup → `pushUndo()` → re-apply);
+  `scrollFixCancel()` restores the backup. Changing speed/lines or closing the panel discards a
+  pending preview. The fixes: **M4** (`scrollFixM4`) snaps each odd-x edge byte to an even x by
+  extending the adjacent run one pixel (decisions read the original row, so no cascade); **M2**
+  (`scrollFixM2`) flattens each 3+-colour window to its two commonest colours, repainting the
+  minority via `setPixel` over a few passes. Both are lossy by nature — the preview is the safeguard.
+- **Scope:** S1 (cost gutter + heat), S2 (flat lines = 0), M4-1, M4-2, M2-1, G1, the R1 hint and the
+  auto-fix are all implemented. Line interrupts mid-line aren't modelled (matches the renderer — see
+  handover §7).
 
 ---
 
