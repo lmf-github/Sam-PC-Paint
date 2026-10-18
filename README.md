@@ -38,6 +38,9 @@ browser.
 - **Adjustable grid** — toggle on, then step the cell size (1×1, 2×2, …); shown on the canvas
   and in the magnifier
 - **Magnifier** — 20× view with a yellow cursor crosshair and the configured grid
+- **Scroll Check** (M2/M4) — highlights art that scrolls slowly or can't be shown when scrolled
+  sideways: three-colour windows (M2), odd-x colour edges (M4), plus a per-line cost gutter and a
+  cost-per-frame summary
 - **Undo/redo** — 80 steps per screen
 
 ---

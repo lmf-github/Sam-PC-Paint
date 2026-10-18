@@ -534,6 +534,35 @@ both palettes as colour blocks (`palcopySwatches`), and `palcopyConfirm(from, to
 and `clut3` in place. The overwrite is pushed to the **target** screen's undo stack (or
 `pushUndo()` if the target is active); pixel data and LI are untouched.
 
+### 6.14 Scroll Check (modes 2 & 4)
+
+Flags art that is costly — or impossible — to scroll sideways on the SAM. The rules, formulas and
+exact test values come from `docs/scroll-rules-handover.md` (the scroller project's handover); the
+JS ports those formulas verbatim and reproduces every §5 figure.
+
+- **Analysis** (`sc*` helpers, all operating on one 256-wide wrapping line):
+  - `scrollLineValues(y)` — the per-pixel value a line compares: **slots** (`pixelBuf`) in Mode 4,
+    **displayed palette indices** (`attrPixelToClut`) in Mode 2. This is the key mode split: Mode 4
+    stores slot bytes (two equal-colour slots still cost a store), Mode 2's limit is about the
+    colours actually shown.
+  - Mode 4: `scM4Bytes`/`scHalfShift`/`scM4Stores` (S1 cost = average stores/step; odd speeds
+    average the two half-byte steps), `scOddEdgeBytes` (M4-1, only meaningful at even speed).
+  - Mode 2: `scM2ChangedCells` (S1 cost) and `scM2BadWindows` (M2-1: 8-px windows, at the
+    alignments speed `p` visits — multiples of `gcd(p,8)` — that hold 3+ colours and can't be shown).
+- **State & flow:** `scrollCheckActive`, `scrollSpeed` (1–8, default 2), `scrollLines` (parsed by
+  `scrollParseLines`, "all" or ranges like `8-43, 148-183`). `scrollRecompute()` runs the band,
+  stores `scrollResult`, then draws. It is hooked from `renderFull` (both paths) and `onMouseUp`,
+  so the overlay tracks edits, zoom and screen switches; it early-outs with a message for modes 1/3.
+- **Display:** a dedicated `#scroll-canvas` overlay (stacked like `cursor-canvas`, sized in
+  `resizeCanvases`) draws M4-1 amber edge boxes or M2-1 red dashed windows with the lost colour
+  filled. `#scroll-panel` holds speed/line controls, a per-line cost **gutter** (`renderScrollGutter`,
+  hover via `scrollGutterHover`) and a band **summary** (`updateScrollSummary`: stores/frame, the
+  §1 scan-line estimate border–display, % of the 312-line frame, and worst lines).
+- **Scope (this increment):** S1 cost gutter + band summary, S2 (flat lines show 0), M4-1 and M2-1
+  overlays. Deferred: M4-2 (uncommon stored values), G1 (wrap seam marker), the R1 tooltip, and the
+  blue S1 cost-heat tint. Line interrupts mid-line aren't modelled (matches the renderer — see the
+  handover §7).
+
 ---
 
 ## 7. Known Issues and Outstanding Work

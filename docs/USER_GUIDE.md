@@ -251,6 +251,36 @@ The grid draws on the canvas and in the magnifier, and is suppressed only when a
 smaller than about 3px on screen. The yellow attribute-cell grid for Modes 1/2 is separate and
 always reflects the hardware cells.
 
+### Scroll Check
+
+The **Scroll** button in the titlebar opens the **Scroll Check** panel, which highlights where
+artwork is slow — or impossible — to scroll sideways on the SAM. It applies to **Mode 2** and
+**Mode 4** (the modes the scroller supports); Modes 1 and 3 show a note instead.
+
+The idea: a smooth sideways scroller only rewrites the screen bytes that *change* as the picture
+moves, so the cost of a frame comes straight from the art. Colour edges **along** a line cost;
+flat areas and colour changes **between** lines are free.
+
+- **Speed** (1–8 px/frame, default 2) and **Lines** (`all`, or ranges like `8-43, 148-183`) set
+  the band being checked — the rules depend on both.
+- **On-canvas highlights:**
+  - **Red dashed boxes (Mode 2)** — an 8-pixel window that would contain three or more colours
+    once scrolled. The SAM can't show three colours in eight pixels, so the picture would break.
+    The pixels of the colour that would be lost are filled red. *Fix:* keep colour areas at least
+    8 px wide, or put fine detail only between the same two colours.
+  - **Amber boxes (Mode 4)** — a two-pixel byte whose halves differ (a colour edge on an odd x).
+    At even scroll speeds each of these costs an extra store every step. *Fix:* nudge the edge one
+    pixel so it falls on an even x. (Shown only at even speeds, where it matters.)
+- **Gutter** — one bar per line beside the controls, its length the line's cost, with a red mark
+  on lines that have errors. Hover a line for its exact numbers.
+- **Summary** — the band's cost per frame, an estimate in scan lines and as a share of the
+  50 Hz frame, and the three most expensive lines.
+
+The overlay updates live as you draw. General tips: in Mode 4 keep edges on even x and scroll in
+whole bytes (2 or 4 px/frame); in Mode 2 never put three colours within 8 px and change colours
+between lines rather than along them; a pattern that repeats every *N* px is free at speeds that
+are multiples of *N*.
+
 ---
 
 ## Screens and Windowed Mode
