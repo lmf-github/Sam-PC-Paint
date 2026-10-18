@@ -547,21 +547,30 @@ JS ports those formulas verbatim and reproduces every §5 figure.
     colours actually shown.
   - Mode 4: `scM4Bytes`/`scHalfShift`/`scM4Stores` (S1 cost = average stores/step; odd speeds
     average the two half-byte steps), `scOddEdgeBytes` (M4-1, only meaningful at even speed).
-  - Mode 2: `scM2ChangedCells` (S1 cost) and `scM2BadWindows` (M2-1: 8-px windows, at the
-    alignments speed `p` visits — multiples of `gcd(p,8)` — that hold 3+ colours and can't be shown).
+    `scM4Stores` also returns `changed` (byte indices, for S1 heat), `values` (stored-value tally,
+    summed over the band for M4-2's top-5) and `byteVals` (byte → stored values, for M4-2 flagging).
+  - Mode 2: `scM2ChangedCells` (S1 cost; also returns `changedWindows` for S1 heat) and
+    `scM2BadWindows` (M2-1: 8-px windows, at the alignments speed `p` visits — multiples of
+    `gcd(p,8)` — that hold 3+ colours and can't be shown).
 - **State & flow:** `scrollCheckActive`, `scrollSpeed` (1–8, default 2), `scrollLines` (parsed by
-  `scrollParseLines`, "all" or ranges like `8-43, 148-183`). `scrollRecompute()` runs the band,
-  stores `scrollResult`, then draws. It is hooked from `renderFull` (both paths) and `onMouseUp`,
-  so the overlay tracks edits, zoom and screen switches; it early-outs with a message for modes 1/3.
+  `scrollParseLines`, "all" or ranges like `8-43, 148-183`), and per-rule overlay toggles
+  `scShowS1/M41/M42/M21/G1` (errors/edges on, heat & seam off). `scrollRecompute()` runs the band,
+  computes the M4-2 top-5 and `m42` count and the `seamLines` count, stores `scrollResult`, then
+  draws. It is hooked from `renderFull` (both paths) and `onMouseUp`, so the overlay tracks edits,
+  zoom and screen switches; it early-outs with a message for modes 1/3. `scrollRuleToggle()` just
+  re-runs `renderScrollOverlay()` (no re-analysis) when a checkbox changes.
 - **Display:** a dedicated `#scroll-canvas` overlay (stacked like `cursor-canvas`, sized in
-  `resizeCanvases`) draws M4-1 amber edge boxes or M2-1 red dashed windows with the lost colour
-  filled. `#scroll-panel` holds speed/line controls, a per-line cost **gutter** (`renderScrollGutter`,
-  hover via `scrollGutterHover`) and a band **summary** (`updateScrollSummary`: stores/frame, the
-  §1 scan-line estimate border–display, % of the 312-line frame, and worst lines).
-- **Scope (this increment):** S1 cost gutter + band summary, S2 (flat lines show 0), M4-1 and M2-1
-  overlays. Deferred: M4-2 (uncommon stored values), G1 (wrap seam marker), the R1 tooltip, and the
-  blue S1 cost-heat tint. Line interrupts mid-line aren't modelled (matches the renderer — see the
-  handover §7).
+  `resizeCanvases`). `renderScrollOverlay()` draws, in order: **S1** blue cost-heat tint (run-length
+  filled per line, alpha by overlap count), **M4-1** amber edge boxes, **M4-2** thin amber underlines
+  on bytes stored with an off-top-5 value, **M2-1** red dashed windows with the lost colour filled,
+  and **G1** cyan seam ticks at x=0/255. `#scroll-panel` holds speed/line controls, the rule
+  checkboxes, a per-line cost **gutter** (`renderScrollGutter`; hover via `scrollGutterHover`, which
+  also carries the **R1** "repeats cheap / costly for its edges" note), a band **summary**
+  (`updateScrollSummary`: cost/frame, M4-2 and seam counts, the §1 scan-line estimate, % of the
+  312-line frame, worst lines), and a context-specific **advice** block (`updateScrollAdvice`) that
+  explains each highlight present and how to fix it.
+- **Scope:** S1 (cost gutter + heat), S2 (flat lines = 0), M4-1, M4-2, M2-1, G1 and the R1 hint are
+  all implemented. Line interrupts mid-line aren't modelled (matches the renderer — see handover §7).
 
 ---
 

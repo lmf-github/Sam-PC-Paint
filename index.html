@@ -219,7 +219,7 @@ body {
   font-family: var(--font-ui);
 }
 #scroll-panel.visible { display: block; }
-#scroll-panel .sc-title { font-size: 13px; font-weight: 600; color: var(--accent); margin-bottom: 2px; }
+#scroll-panel .sc-title { font-size: 13px; font-weight: 600; color: var(--accent); margin-bottom: 2px; cursor: move; user-select: none; }
 #scroll-panel .sc-sub   { font-size: 10px; color: var(--text3); margin-bottom: 10px; line-height: 1.4; }
 .sc-row { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; font-size: 11px; color: var(--text2); }
 .sc-row > span:first-child { width: 48px; flex-shrink: 0; }
@@ -233,6 +233,11 @@ body {
 .sc-gutter-hint { font-size: 9px; color: var(--text3); margin-top: 3px; min-height: 12px; font-family: var(--font-mono); }
 .sc-summary { font-size: 10px; color: var(--text2); font-family: var(--font-mono); line-height: 1.5; margin-top: 8px; border-top: 1px solid var(--border2); padding-top: 8px; white-space: pre-wrap; }
 .sc-summary b { color: var(--accent); font-weight: 600; }
+.sc-rules { flex-wrap: wrap; gap: 3px 10px; }
+.sc-rules label { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; color: var(--text2); cursor: pointer; }
+.sc-rules input { margin: 0; cursor: pointer; }
+.sc-advice { font-size: 10px; color: var(--text2); line-height: 1.45; margin-top: 8px; border-top: 1px solid var(--border2); padding-top: 8px; }
+.sc-advice b { font-weight: 600; }
 #clut-indicator {
   position: absolute;
   top: 0;
@@ -946,7 +951,7 @@ body {
       <span class="zoom-display" id="grid-size-disp" title="Grid cell size">1×1</span>
       <button class="btn" onclick="gridSizeStep(1)" title="Larger grid cell">+</button>
     </span>
-    <button class="btn" id="btn-scroll" onclick="toggleScrollCheck()" title="Scroll Check — flag art that scrolls slowly or clashes (modes 2 &amp; 4)">Scroll</button>
+    <button class="btn" id="btn-scroll" onclick="toggleScrollCheck()" title="Horizontal Scroll Check — flag art that scrolls slowly or clashes (modes 2 &amp; 4)">Scroll</button>
     <button class="btn" id="btn-sprite-mode" onclick="toggleSpriteMode()" title="Sprite Editor Mode">Sprites</button>
     <button class="btn" onclick="showAbout()">?</button>
   </div>
@@ -954,7 +959,7 @@ body {
 
 <!-- SCROLL CHECK PANEL — flags art that is costly/impossible to scroll sideways -->
 <div id="scroll-panel">
-  <div class="sc-title">Scroll Check</div>
+  <div class="sc-title" onmousedown="scrollPanelDragStart(event)" title="Drag to move">Horizontal Scroll Check</div>
   <div class="sc-sub">Flags art that scrolls slowly or can't be shown when scrolled sideways. Modes 2 &amp; 4.
     <span style="color:rgba(255,40,40,0.95)">&#9632;</span> error (M2-1) ·
     <span style="color:rgba(255,180,40,0.95)">&#9632;</span> odd-x edge (M4-1).</div>
@@ -963,9 +968,17 @@ body {
     <span class="sc-v" id="sc-speed-v">2 px</span></div>
   <div class="sc-row"><span>Lines</span>
     <input type="text" id="sc-lines" value="all" placeholder="all, or 8-43, 148-183" onchange="scrollSetLines(this.value)"></div>
+  <div class="sc-row sc-rules">
+    <label title="M2-1: 3 colours in an 8-px window (can't be shown)"><input type="checkbox" id="sc-r-m21" checked onchange="scrollRuleToggle()"> M2-1</label>
+    <label title="M4-1: colour edge on an odd x (extra cost at even speeds)"><input type="checkbox" id="sc-r-m41" checked onchange="scrollRuleToggle()"> M4-1</label>
+    <label title="M4-2: stored value not in the engine's top-5 registers"><input type="checkbox" id="sc-r-m42" checked onchange="scrollRuleToggle()"> M4-2</label>
+    <label title="S1: blue tint over bytes rewritten each step (cost heat)"><input type="checkbox" id="sc-r-s1" onchange="scrollRuleToggle()"> Heat</label>
+    <label title="G1: wrap seam — pixels 0 and 255 differ"><input type="checkbox" id="sc-r-g1" onchange="scrollRuleToggle()"> Seam</label>
+  </div>
   <canvas id="scroll-gutter" height="192"></canvas>
   <div class="sc-gutter-hint" id="sc-gutter-hint">Bar = cost per line · red dot = error line</div>
   <div class="sc-summary" id="sc-summary"></div>
+  <div class="sc-advice" id="sc-advice"></div>
 </div>
 
 <!-- ADJUSTMENTS PANEL — recolours the current image's palette live -->
@@ -2507,6 +2520,9 @@ function gridSizeStep(delta) {
 // Rules, formulas and test values: docs/scroll-rules-handover.md (modes 2 & 4).
 // ════════════════════════════════════════════════════════
 let scrollCheckActive = false, scrollSpeed = 2, scrollLines = null, scrollResult = null;
+// Which overlays are drawn. Error/edge rules default on; the cost-heat tint and the
+// seam hint default off so they don't bury the problems that need fixing.
+let scShowS1 = false, scShowM41 = true, scShowM42 = true, scShowM21 = true, scShowG1 = false;
 
 const scMod = (a, n) => ((a % n) + n) % n;
 
@@ -2530,15 +2546,23 @@ function scOddEdgeBytes(b) {               // M4-1: byte whose two pixels differ
   for (let i = 0; i < 128; i++) if ((b[i] >> 4) !== (b[i] & 15)) out.push(i);
   return out;
 }
-function scM4Stores(b, p) {                 // S1 cost: average stores per step
+function scM4Stores(b, p) {                 // S1 cost + which bytes change (heat) + stored values (M4-2)
   const v = [b, scHalfShift(b)];
   const rs = (p % 2 === 0) ? [0] : [0, 1];
   let total = 0;
+  const changed = new Set(), values = new Map(), byteVals = new Map();
   for (const r of rs) {
     const r2 = (r + p) % 2, d = Math.floor((r + p) / 2);
-    for (let i = 0; i < 128; i++) if (v[r][i] !== v[r2][scMod(i - d, 128)]) total++;
+    for (let i = 0; i < 128; i++) {
+      const nv = v[r2][scMod(i - d, 128)];
+      if (v[r][i] !== nv) {
+        total++; changed.add(i);
+        values.set(nv, (values.get(nv) || 0) + 1);
+        let s = byteVals.get(i); if (!s) { s = new Set(); byteVals.set(i, s); } s.add(nv);
+      }
+    }
   }
-  return total / rs.length;
+  return { stores: total / rs.length, changed, values, byteVals };
 }
 // ---- Mode 2 (compares displayed colours) ----
 const scGcd = (a, b) => b ? scGcd(b, a % b) : a;
@@ -2551,18 +2575,19 @@ function scM2BadWindows(c, p) {             // M2-1: 8-px windows with 3+ colour
   }
   return out;
 }
-function scM2ChangedCells(c, p) {           // S1 cost: changed cells per step
+function scM2ChangedCells(c, p) {           // S1 cost + which windows change (heat)
   const g = scGcd(p, 8);
   let total = 0, steps = 0;
+  const changedWindows = new Set();
   for (let r = 0; r < 8; r += g) {
     steps++;
     for (let cell = 0; cell < 32; cell++) {
       const x0 = scMod(8 * cell - r, 256);
       for (let k = 0; k < 8; k++)
-        if (c[scMod(x0 + k, 256)] !== c[scMod(x0 - p + k, 256)]) { total++; break; }
+        if (c[scMod(x0 + k, 256)] !== c[scMod(x0 - p + k, 256)]) { total++; changedWindows.add(x0); break; }
     }
   }
-  return total / steps;
+  return { cells: total / steps, changedWindows };
 }
 
 // Effective per-pixel value for a line: slots in Mode 4, displayed palette indices in Mode 2.
@@ -2598,22 +2623,31 @@ function scrollRecompute() {
   }
   if (!scrollLines) scrollLines = scrollParseLines('all');
   const p = scrollSpeed, per = [];
-  let total = 0, badWindows = 0, badLines = 0, oddTotal = 0, edgeTotal = 0;
+  let total = 0, badWindows = 0, badLines = 0, oddTotal = 0, edgeTotal = 0, seamLines = 0;
+  const bandValues = new Map();                       // stored-value tally across the band (M4-2)
   for (const y of scrollLines) {
     const v = scrollLineValues(y);
     const ed = scEdges(v); edgeTotal += ed;
+    const seam = v[0] !== v[255]; if (seam) seamLines++;   // G1 wrap seam
     if (mode === 4) {
-      const b = scM4Bytes(v), cost = scM4Stores(b, p);
+      const b = scM4Bytes(v), r = scM4Stores(b, p);
       const odd = (p % 2 === 0) ? scOddEdgeBytes(b) : [];
-      per.push({ y, cost, odd, bad: [], edges: ed });
-      total += cost; oddTotal += odd.length;
+      per.push({ y, cost: r.stores, odd, bad: [], edges: ed, changed: r.changed, byteVals: r.byteVals, seam });
+      total += r.stores; oddTotal += odd.length;
+      for (const [nv, n] of r.values) bandValues.set(nv, (bandValues.get(nv) || 0) + n);
     } else {
-      const cost = scM2ChangedCells(v, p), bad = scM2BadWindows(v, p);
-      per.push({ y, cost, odd: [], bad, edges: ed, vals: v });
-      total += cost; badWindows += bad.length; if (bad.length) badLines++;
+      const r = scM2ChangedCells(v, p), bad = scM2BadWindows(v, p);
+      per.push({ y, cost: r.cells, odd: [], bad, edges: ed, vals: v, changedWindows: r.changedWindows, seam });
+      total += r.cells; badWindows += bad.length; if (bad.length) badLines++;
     }
   }
-  scrollResult = { mode, p, lines: scrollLines, per, total, badWindows, badLines, oddTotal, edgeTotal };
+  // M4-2: the five commonest stored values live in registers; flag stores outside them.
+  let top5 = new Set(), m42 = 0;
+  if (mode === 4) {
+    top5 = new Set([...bandValues.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(e => e[0]));
+    for (const L of per) for (const [, set] of L.byteVals) for (const nv of set) if (!top5.has(nv)) m42++;
+  }
+  scrollResult = { mode, p, lines: scrollLines, per, total, badWindows, badLines, oddTotal, edgeTotal, seamLines, top5, m42 };
   renderScrollOverlay();
   renderScrollGutter();
   updateScrollSummary();
@@ -2628,19 +2662,49 @@ function scDrawWrapRect(x0, y, w, z) {      // stroke a w-px-wide, 1-line-tall b
 function renderScrollOverlay() {
   sctx.clearRect(0, 0, scrollCanvas.width, scrollCanvas.height);
   if (!scrollResult || !scrollCheckActive) return;
-  const z = zoom;
-  if (scrollResult.mode === 4) {
+  const z = zoom, R = scrollResult;
+
+  // S1 cost-heat tint (drawn first, under the rule highlights). Blue over the bytes
+  // (M4) or windows (M2) rewritten each step; stronger where more windows overlap.
+  if (scShowS1) {
+    for (const L of R.per) {
+      const heat = new Uint16Array(256);
+      if (R.mode === 4) { if (L.changed) for (const i of L.changed) { heat[2 * i]++; heat[2 * i + 1]++; } }
+      else if (L.changedWindows) for (const x0 of L.changedWindows) for (let k = 0; k < 8; k++) heat[scMod(x0 + k, 256)]++;
+      let x = 0;                                     // run-length fill so heavy lines stay fast
+      while (x < 256) {
+        if (!heat[x]) { x++; continue; }
+        const h = heat[x]; let x2 = x + 1; while (x2 < 256 && heat[x2] === h) x2++;
+        sctx.fillStyle = `rgba(70,140,250,${Math.min(0.12 + 0.12 * h, 0.55)})`;
+        sctx.fillRect(x * z, L.y * z, (x2 - x) * z, z);
+        x = x2;
+      }
+    }
+  }
+
+  if (R.mode === 4) {
     // M4-1: amber outline per odd-x edge byte (two pixels wide)
-    sctx.strokeStyle = 'rgba(255,180,40,0.9)';
-    sctx.lineWidth = 1;
-    sctx.beginPath();
-    for (const L of scrollResult.per)
-      for (const i of L.odd)
-        sctx.rect(Math.round(i * 2 * z) + 0.5, Math.round(L.y * z) + 0.5, Math.round(2 * z) - 1, Math.round(z) - 1);
-    sctx.stroke();
-  } else {
+    if (scShowM41) {
+      sctx.strokeStyle = 'rgba(255,180,40,0.9)';
+      sctx.lineWidth = 1; sctx.beginPath();
+      for (const L of R.per)
+        for (const i of L.odd)
+          sctx.rect(Math.round(i * 2 * z) + 0.5, Math.round(L.y * z) + 0.5, Math.round(2 * z) - 1, Math.round(z) - 1);
+      sctx.stroke();
+    }
+    // M4-2: thin amber underline on bytes stored with an uncommon value (not top-5)
+    if (scShowM42 && R.top5) {
+      sctx.strokeStyle = 'rgba(255,215,90,0.95)';
+      sctx.lineWidth = 1; sctx.beginPath();
+      for (const L of R.per) if (L.byteVals) for (const [i, set] of L.byteVals) {
+        let uncommon = false; for (const nv of set) if (!R.top5.has(nv)) { uncommon = true; break; }
+        if (uncommon) { const yb = Math.round((L.y + 1) * z) - 0.5; sctx.moveTo(i * 2 * z, yb); sctx.lineTo((i * 2 + 2) * z, yb); }
+      }
+      sctx.stroke();
+    }
+  } else if (scShowM21) {
     // M2-1: red dashed outline per bad window + fill the colour that would be lost
-    for (const L of scrollResult.per) {
+    for (const L of R.per) {
       if (!L.bad.length) continue;
       for (const x0 of L.bad) {
         const cnt = new Map();
@@ -2654,6 +2718,16 @@ function renderScrollOverlay() {
         scDrawWrapRect(x0, L.y, 8, z);
         sctx.setLineDash([]);
       }
+    }
+  }
+
+  // G1: cyan ticks at the wrap seam (x=0 / x=255) on lines whose ends differ
+  if (scShowG1) {
+    const tick = Math.max(1, Math.round(z * 0.5));
+    sctx.fillStyle = 'rgba(80,230,230,0.9)';
+    for (const L of R.per) if (L.seam) {
+      sctx.fillRect(0, L.y * z, tick, z);
+      sctx.fillRect(256 * z - tick, L.y * z, tick, z);
     }
   }
 }
@@ -2688,7 +2762,12 @@ function scrollGutterHover(e) {
   const extra = scrollResult.mode === 4
     ? (L.odd.length ? ` · ${L.odd.length} odd-x` : '')
     : (L.bad.length ? ` · ${L.bad.length} err` : '');
-  hint.textContent = `line ${y}: ${scFmt(L.cost)} ${unit} · ${L.edges} edges${extra}`;
+  // R1: a pattern repeating every N px is free when speed is a multiple of N — it
+  // shows up as many edges but low cost (or the reverse).
+  let r1 = '';
+  if (L.edges >= 6 && L.cost <= L.edges * 0.5) r1 = ' · repeats cheap at this speed';
+  else if (L.edges > 0 && L.cost > L.edges * 1.5) r1 = ' · costly for its edges';
+  hint.textContent = `line ${y}: ${scFmt(L.cost)} ${unit} · ${L.edges} edges${extra}${r1}`;
 }
 
 function scFmt(n) { return Number.isInteger(n) ? String(n) : n.toFixed(1); }
@@ -2703,15 +2782,38 @@ function updateScrollSummary() {
     .filter(L => L.cost > 0).map(L => `${L.y} (${scFmt(L.cost)})`).join(', ') || 'none';
   const ruleLine = R.mode === 2
     ? `<b>M2-1 errors:</b> ${R.badWindows} window(s), ${R.badLines} line(s)\n`
-    : ((R.p % 2 === 0) ? `<b>M4-1 odd-x edges:</b> ${R.oddTotal} byte(s)\n` : `<b>M4-1:</b> n/a at odd speed\n`);
+    : (((R.p % 2 === 0) ? `<b>M4-1 odd-x edges:</b> ${R.oddTotal} byte(s)\n` : `<b>M4-1:</b> n/a at odd speed\n`) +
+       `<b>M4-2 uncommon:</b> ${R.m42} store(s)\n`);
   sum.innerHTML =
     `<b>Band:</b> ${R.lines.length} line(s) @ ${R.p} px/frame\n` +
     `<b>Cost:</b> ${scFmt(R.total)} ${unit}/frame\n` +
     ruleLine +
-    `<b>Edges:</b> ${R.edgeTotal} total\n` +
+    `<b>Edges:</b> ${R.edgeTotal} total · <b>seam:</b> ${R.seamLines} line(s)\n` +
     `<b>Time:</b> ~${bl.toFixed(0)}–${dl.toFixed(0)} scan lines (border–display)\n` +
     `<b>Frame:</b> ~${(bl / 312 * 100).toFixed(0)}–${(dl / 312 * 100).toFixed(0)}% of 312\n` +
     `<b>Worst lines:</b> ${worst}`;
+  updateScrollAdvice(R);
+}
+
+// Context-specific "what it means / how to fix" guidance for the current result.
+function updateScrollAdvice(R) {
+  const el = document.getElementById('sc-advice');
+  if (!el) return;
+  const tips = [];
+  if (R.mode === 2) {
+    if (R.badWindows > 0) tips.push('<b style="color:rgba(255,80,80,1)">Red</b> = 3 colours land in one 8-px window when scrolled, which the SAM can’t show. <b>Fix:</b> on those lines make each colour band at least 8 px wide, or keep fine detail between only two colours (the red-filled pixels are the colour that would be dropped).');
+    else tips.push('No M2-1 errors — this art can be shown at every scroll step. ✓');
+    tips.push('Cheaper Mode 2: change colours <b>between</b> lines, not along them; fewer colour edges per line.');
+  } else {
+    if (R.p % 2 === 0 && R.oddTotal > 0) tips.push('<b style="color:rgba(255,180,40,1)">Amber box</b> = a colour edge on an odd x; at even speeds each costs an extra store every step. <b>Fix:</b> nudge the edge one pixel so it falls on an even x.');
+    else if (R.p % 2 === 0) tips.push('No odd-x edges — every edge is already on an even x. ✓');
+    else tips.push('Odd speed: odd/even edges cost the same, so M4-1 doesn’t apply. Even speeds (2, 4…) scroll in whole bytes and are cheaper per edge.');
+    if (R.m42 > 0) tips.push('<b style="color:rgba(255,215,90,1)">Amber underline</b> = a stored byte value the engine can’t keep in a register. <b>Fix:</b> reuse the same few two-colour combinations at edges.');
+    tips.push('Cheaper Mode 4: fewer edges per line; scroll in whole bytes (2 or 4 px/frame).');
+  }
+  if (R.seamLines > 0) tips.push('<b style="color:rgba(80,230,230,1)">Cyan</b> (Seam on) = pixel 0 and 255 differ, so the wrap join is one more moving edge. Match the two screen edges for a seamless loop.');
+  tips.push('<b style="color:rgba(90,150,240,1)">Blue</b> (Heat on) = bytes rewritten each step — that’s the cost. A pattern that repeats every N px is free when the speed is a multiple of N.');
+  el.innerHTML = tips.map(t => '• ' + t).join('<br>');
 }
 
 function toggleScrollCheck() {
@@ -2722,6 +2824,7 @@ function toggleScrollCheck() {
     if (!scrollLines) scrollLines = scrollParseLines(document.getElementById('sc-lines').value);
     const g = document.getElementById('scroll-gutter');
     if (!g._scHooked) { g.addEventListener('mousemove', scrollGutterHover); g._scHooked = true; }
+    scrollRuleToggle();   // sync overlay checkboxes → state
     scrollRecompute();
   } else {
     sctx.clearRect(0, 0, scrollCanvas.width, scrollCanvas.height);
@@ -2733,6 +2836,30 @@ function scrollSetSpeed(v) {
   scrollRecompute();
 }
 function scrollSetLines(str) { scrollLines = scrollParseLines(str); scrollRecompute(); }
+// Drag the panel by its title bar so it doesn't sit over the zoom window.
+function scrollPanelDragStart(e) {
+  const panel = document.getElementById('scroll-panel');
+  const r = panel.getBoundingClientRect();
+  panel.style.left = r.left + 'px'; panel.style.top = r.top + 'px'; panel.style.right = 'auto';
+  const ox = e.clientX - r.left, oy = e.clientY - r.top;
+  function move(ev) {
+    const nx = Math.max(0, Math.min(window.innerWidth  - 40, ev.clientX - ox));
+    const ny = Math.max(0, Math.min(window.innerHeight - 20, ev.clientY - oy));
+    panel.style.left = nx + 'px'; panel.style.top = ny + 'px';
+  }
+  function up() { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); }
+  document.addEventListener('mousemove', move);
+  document.addEventListener('mouseup', up);
+  e.preventDefault();
+}
+function scrollRuleToggle() {
+  scShowS1  = document.getElementById('sc-r-s1').checked;
+  scShowM41 = document.getElementById('sc-r-m41').checked;
+  scShowM42 = document.getElementById('sc-r-m42').checked;
+  scShowM21 = document.getElementById('sc-r-m21').checked;
+  scShowG1  = document.getElementById('sc-r-g1').checked;
+  renderScrollOverlay();   // only the drawing changes — no need to re-analyse
+}
 
 function updateMagnifier(cx, cy) {
   const MAG_CANVAS_PX = 480;

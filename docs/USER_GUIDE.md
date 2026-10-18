@@ -253,9 +253,10 @@ always reflects the hardware cells.
 
 ### Scroll Check
 
-The **Scroll** button in the titlebar opens the **Scroll Check** panel, which highlights where
-artwork is slow — or impossible — to scroll sideways on the SAM. It applies to **Mode 2** and
-**Mode 4** (the modes the scroller supports); Modes 1 and 3 show a note instead.
+The **Scroll** button in the titlebar opens the **Horizontal Scroll Check** panel, which highlights
+where artwork is slow — or impossible — to scroll sideways on the SAM. It applies to **Mode 2** and
+**Mode 4** (the modes the scroller supports); Modes 1 and 3 show a note instead. Drag the panel by
+its title bar to move it out of the way of the canvas or the magnifier.
 
 The idea: a smooth sideways scroller only rewrites the screen bytes that *change* as the picture
 moves, so the cost of a frame comes straight from the art. Colour edges **along** a line cost;
@@ -263,18 +264,31 @@ flat areas and colour changes **between** lines are free.
 
 - **Speed** (1–8 px/frame, default 2) and **Lines** (`all`, or ranges like `8-43, 148-183`) set
   the band being checked — the rules depend on both.
+- **Rule checkboxes** turn each overlay on or off. Errors and edges (**M2-1**, **M4-1**, **M4-2**)
+  start on; the cost **Heat** tint and the **Seam** hint start off so they don't bury the problems.
 - **On-canvas highlights:**
-  - **Red dashed boxes (Mode 2)** — an 8-pixel window that would contain three or more colours
-    once scrolled. The SAM can't show three colours in eight pixels, so the picture would break.
-    The pixels of the colour that would be lost are filled red. *Fix:* keep colour areas at least
-    8 px wide, or put fine detail only between the same two colours.
-  - **Amber boxes (Mode 4)** — a two-pixel byte whose halves differ (a colour edge on an odd x).
-    At even scroll speeds each of these costs an extra store every step. *Fix:* nudge the edge one
+  - **Red dashed boxes (Mode 2 — M2-1)** — an 8-pixel window that would contain three or more
+    colours once scrolled. The SAM can't show three colours in eight pixels, so the picture would
+    break. The pixels of the colour that would be lost are filled red. *Fix:* keep colour areas at
+    least 8 px wide, or put fine detail only between the same two colours.
+  - **Amber boxes (Mode 4 — M4-1)** — a two-pixel byte whose halves differ (a colour edge on an
+    odd x). At even scroll speeds each costs an extra store every step. *Fix:* nudge the edge one
     pixel so it falls on an even x. (Shown only at even speeds, where it matters.)
+  - **Amber underline (Mode 4 — M4-2)** — a byte stored with a colour combination the scroll engine
+    can't keep in a fast register (not one of the band's five commonest). *Fix:* reuse the same few
+    two-colour combinations at edges. Low priority — it mostly coincides with M4-1.
+  - **Blue tint (Heat — S1)** — the bytes (Mode 4) or 8-px windows (Mode 2) that get rewritten each
+    step; brighter where more overlap. This *is* the cost: fewer/flatter edges means less blue.
+  - **Cyan ticks (Seam — G1)** — on lines where pixel 0 and pixel 255 differ, so the wrap-around
+    join is one more moving edge. *Fix:* match the two screen edges if you want a seamless loop.
 - **Gutter** — one bar per line beside the controls, its length the line's cost, with a red mark
-  on lines that have errors. Hover a line for its exact numbers.
-- **Summary** — the band's cost per frame, an estimate in scan lines and as a share of the
-  50 Hz frame, and the three most expensive lines.
+  on lines that have errors. Hover a line for its exact numbers (and a note when a line is cheap
+  for its edge count, i.e. a pattern that repeats at this speed).
+- **Summary** — the band's cost per frame, the rule counts, an estimate in scan lines and as a
+  share of the 50 Hz frame, and the three most expensive lines.
+- **Suggestions** — below the summary, a plain-language explanation of exactly which highlights are
+  showing on your art and how to correct each one. This is the quickest way to answer "what does
+  this mean and how do I fix it?"
 
 The overlay updates live as you draw. General tips: in Mode 4 keep edges on even x and scroll in
 whole bytes (2 or 4 px/frame); in Mode 2 never put three colours within 8 px and change colours
