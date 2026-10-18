@@ -379,6 +379,14 @@ Click **Import SCR** to load a native SAM SCREEN$ file (`.ss1`, `.ss2`, `.ss3`, 
 The file's pixel data, palette, and line interrupts are loaded directly. The editor detects
 the mode from the file extension or prompts if ambiguous.
 
+**SimCoupe `.ssx` screenshots** are also supported. These are a simpler format than a native
+SCREEN$ — a single palette appended after the pixels, with no second (flash) palette and no line
+interrupts, and mode 3 stores only its four colours. The mode is detected automatically from the
+file size (mode 1 = 6,928 bytes, mode 2 = 12,304, mode 3 = 24,580, mode 4 = 24,592). Dynamic SSX
+screenshots saved in the RAW 512×192 form (98,304 bytes, used when a program changes palette or
+mode mid-frame) are **not** supported; an SSX of any other size falls back to the manual
+mode-picker.
+
 ---
 
 ## Exporting

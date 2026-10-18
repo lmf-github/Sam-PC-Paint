@@ -339,6 +339,22 @@ relative to `penOriginX/Y` and released on mouse-up. Right-button drags stay fre
 fill bucket, eraser, eyedropper; text = I-beam; shapes = crosshair). `applyToolCursor()` sets
 `mainCanvas.style.cursor`; called on tool change and at startup.
 
+**Attribute-mode pixel painting (modes 1 & 2).** `setPixelAttr()` sets a single pixel within the
+2-colours-per-cell limit (cell = 8×8 in mode 1, 8×1 in mode 2; the attribute byte holds a 3-bit
+ink, a 3-bit paper and **one shared BRIGHT bit**). It no longer blindly overwrites the ink slot
+(the old code keyed ink/paper off `bgColor` and clobbered the whole cell, so editing one pixel of
+a solid strip recoloured all eight). The rule now: if the chosen colour already matches the cell's
+ink or paper, just flip this pixel's bit; else, if the colour's brightness matches the cell's and
+a slot is unused by the other pixels, repurpose that free slot (a true single-pixel change); else
+it is a genuine clash (both slots in use, or brightness differs — BRIGHT is shared). On a clash we
+recolour **the slot the clicked pixel currently occupies** (its current bit), so "repaint this
+pixel" replaces the colour it was showing — e.g. clicking a grey pixel in a black+grey strip turns
+grey→the new colour, not black. `cellSlotUsage()` reports which slots the *other* pixels of the
+cell use. Because BRIGHT is shared, painting a bright colour into a cell that also holds a
+non-bright colour flips the whole cell's BRIGHT bit (the other colour shifts to its bright
+variant); a single-pixel edit of a third colour, or of a conflicting brightness, is physically
+impossible in these modes.
+
 **Document-level drag capture (important).** The canvas mouse handlers live on `mainCanvas`, so
 a drag that leaves the canvas would otherwise stop firing (and `mouseleave` aborted it) — a real
 problem in the small windowed-mode canvases. On drag start, `beginDragCapture()` adds
@@ -368,6 +384,16 @@ skipped, leaving the destination canvas unchanged.
 `pasteClipAt(cx, cy)` commits the paste to `pixelBuf`. A floating paste **carries across screen
 switches**: `selBuffer` is global, and `switchScreen()` re-arms paste mode on the new screen so
 the clip can be placed there (rendered with the destination screen's CLUT).
+
+**Attribute-mode cell snapping (modes 1 & 2 — important).** Colour lives in 8-px cells (8×1 in
+mode 2, 8×8 in mode 1), but pixel *bits* and cell *attributes* are stored separately. If a copy
+and its paste sit at different horizontal 8-px phases, the bits read the wrong cell's ink/paper
+and the paste fills with spurious black/white. To prevent this, `snapSelection()` rounds the
+selection out to whole cells (and syncs `selX/Y` so the on-screen box matches), and `pasteClipAt()`
+/ `drawClipPreview()` round the paste origin to the cell grid. With both ends cell-aligned, each
+destination cell receives exactly one source cell, so colours copy faithfully. Consequence: in
+modes 1/2 the selection and paste quantise to cell boundaries (8-px columns; also 8-px rows in
+mode 1). Mode 3/4 are per-pixel and unaffected.
 
 **Selection toolbar operations** (all scoped to the selection rectangle):
 - `swapFgBgInSelection()` — swaps FG/BG (slot swap in M3/M4; ink/paper swap per cell in M1/M2).
@@ -609,6 +635,16 @@ helper would eliminate this duplication.
 **`buildExportBuffer()` / `doImport()` symmetry** — These functions are the critical
 import/export pair and contain mode-specific branches. They should be kept in sync; any new
 mode or format addition must update both.
+
+**SimCoupe `.ssx` import** — `importScreen()` routes `.ssx` to `importSSX()`, which picks the
+mode from the exact file size (6,928 / 12,304 / 24,580 / 24,592) and calls `doImport(buf, mode,
+filename, /*ssx=*/true)`. The `ssx` flag changes only three things in `doImport`: mode-2
+attributes are read at offset 6,144 (no 2,048-byte padding gap), the palette is a single block
+read with a `>=` guard (modes 1/2/4 = 16 bytes into `clut`; mode 3 = 4 bytes into `clut3`), and
+no Palette B / line-interrupt block is parsed. The SCREEN$ path is unchanged. There is currently
+**no SSX export** — Export SCR always writes the native SCREEN$ layout. The RAW 98,304-byte
+dynamic SSX form is not decoded (an unrecognised size falls back to the manual mode-picker, which
+also passes the `ssx` flag). See TECHNICAL.md → "SimCoupe `.ssx` screenshots" for the layouts.
 
 ---
 

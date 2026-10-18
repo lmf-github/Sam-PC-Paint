@@ -880,7 +880,7 @@ body {
   <div class="tb-group">
     <button class="btn" onclick="newCanvas()">New</button>
     <button class="btn" onclick="triggerImport()">Import SCR</button>
-    <input type="file" id="file-input" style="opacity:0;position:absolute;width:0;height:0;pointer-events:none;" accept=".ss1,.ss2,.ss3,.ss4,.bin,.scr,*">
+    <input type="file" id="file-input" style="opacity:0;position:absolute;width:0;height:0;pointer-events:none;" accept=".ss1,.ss2,.ss3,.ss4,.ssx,.bin,.scr,*">
     <button class="btn" onclick="triggerImportImage()">Import IMG</button>
     <input type="file" id="img-input" style="opacity:0;position:absolute;width:0;height:0;pointer-events:none;" accept="image/png,image/bmp,image/jpeg,image/gif">
     <button class="btn" onclick="triggerImportGMSprite()" title="Import Gamesmaster .s sprite file">Import GM</button>
@@ -2562,28 +2562,71 @@ function setPixel(x, y, clutSlot) {
   pixelBuf[y * screenW + x] = clutSlot;
 }
 
-// Mode 1/2: write pixel bit + update attribute cell ink/paper/bright
-function setPixelAttr(x, y, clutSlot) {
-  // clutSlot 0-7 = non-bright colours, 8-15 = bright colours (index = slot & 7)
-  const isInk  = (clutSlot !== bgColor);
-  const colIdx = clutSlot & 0x7;
-  const bright = clutSlot >= 8 ? 1 : 0;
-  pixelBuf[y * 256 + x] = isInk ? 1 : 0;
-  const attrIdx = (mode === 1) ? (Math.floor(y / 8) * 32 + Math.floor(x / 8))
-                                : (y * 32 + Math.floor(x / 8));
-  const attr = attrBuf[attrIdx] || 0;
-  if (isInk) {
-    // Preserve flash(7) and paper(5-3); clear bright(6) and ink(2-0) before setting
-    // 0x78 = 0111 1000 — wait, that clears bit 7 (flash). Correct: 0xF8 & ~0x47 = 0xB8... 
-    // attr byte: 7=FLASH 6=BRIGHT 5=P2 4=P1 3=P0 2=I2 1=I1 0=I0
-    // Keep: bit7 (flash), bits5-3 (paper). Clear: bit6 (bright), bits2-0 (ink)
-    // Keep mask: 1010 1000 = 0xA8
-    attrBuf[attrIdx] = (attr & 0xA8) | colIdx | (bright << 6);
-  } else {
-    // Keep: bit7 (flash), bits2-0 (ink). Clear: bit6 (bright), bits5-3 (paper)
-    // Keep mask: 1000 0111 = 0x87
-    attrBuf[attrIdx] = (attr & 0x87) | (colIdx << 3) | (bright << 6);
+// Which of a cell's two colour slots are used by pixels OTHER than (exX,exY).
+// Cell = 8×1 strip (mode 2) or 8×8 block (mode 1) containing (x,y).
+function cellSlotUsage(x, y, exX, exY) {
+  let inkUsed = false, paperUsed = false;
+  const c0 = Math.floor(x / 8) * 8;
+  const r0 = (mode === 1) ? Math.floor(y / 8) * 8 : y;
+  const r1 = (mode === 1) ? r0 + 8 : r0 + 1;
+  for (let yy = r0; yy < r1; yy++) {
+    for (let xx = c0; xx < c0 + 8; xx++) {
+      if (xx === exX && yy === exY) continue;
+      if (pixelBuf[yy * 256 + xx]) inkUsed = true; else paperUsed = true;
+      if (inkUsed && paperUsed) return { ink: true, paper: true };
+    }
   }
+  return { ink: inkUsed, paper: paperUsed };
+}
+
+// Mode 1/2: set a single pixel to a colour within the 2-colours-per-cell limit.
+// Attribute byte: 7=FLASH 6=BRIGHT 5-3=PAPER 2-0=INK; bright is shared by both
+// colours. We change only this pixel where the hardware allows:
+//   • colour already the cell's ink/paper  → just flip this pixel's bit
+//   • colour is new but a slot is unused    → repurpose that free slot (others unaffected)
+//   • both slots already in use (true clash) → overwrite ink; other ink pixels recolour
+function setPixelAttr(x, y, clutSlot) {
+  const attrIdx = (mode === 1) ? (Math.floor(y / 8) * 32 + Math.floor(x / 8))
+                               : (y * 32 + Math.floor(x / 8));
+  const attr  = attrBuf[attrIdx] || 0;
+  const flash = attr & 0x80;
+  let ink    = attr & 0x07;
+  let paper  = (attr >> 3) & 0x07;
+  let bright = (attr >> 6) & 1;
+
+  const want = clutSlot & 0x0f;             // target colour 0-15
+  const F    = clutSlot & 0x07;             // 3-bit colour
+  const Fb   = clutSlot >= 8 ? 1 : 0;       // its brightness
+  const effInk   = ink   + (bright ? 8 : 0);
+  const effPaper = paper + (bright ? 8 : 0);
+
+  let bit;
+  if (want === effInk) {
+    bit = 1;                                // already the ink colour — just set the bit
+  } else if (want === effPaper) {
+    bit = 0;                                // already the paper colour — just set the bit
+  } else {
+    // The cell's two colours share one BRIGHT bit, so a lossless single-pixel
+    // change is only possible when the new colour's brightness matches the cell's
+    // and one of the slots is unused by the other pixels.
+    const u = cellSlotUsage(x, y, x, y);    // other pixels in this cell
+    if (Fb === bright && !u.ink) {
+      ink = F; bit = 1;                     // ink slot free → only this pixel changes
+    } else if (Fb === bright && !u.paper) {
+      paper = F; bit = 0;                   // paper slot free → only this pixel changes
+    } else {
+      // Clash: both slots already in use, or the brightness differs (BRIGHT is
+      // shared). Recolour the slot the clicked pixel CURRENTLY occupies, so
+      // "repaint this pixel" replaces the colour it was showing (and the cell's
+      // other pixels of that same colour) rather than the opposite colour.
+      if (pixelBuf[y * 256 + x]) { ink = F;   bit = 1; }   // was ink   → recolour ink
+      else                       { paper = F; bit = 0; }   // was paper → recolour paper
+      bright = Fb;
+    }
+  }
+
+  pixelBuf[y * 256 + x] = bit;
+  attrBuf[attrIdx] = flash | (bright << 6) | (paper << 3) | ink;
 }
 
 function activePal() { return clut; }
@@ -3153,6 +3196,18 @@ function getSelBounds() {
 // Internal snap of pixel data from the selection rectangle into selBuffer
 function snapSelection() {
   const b = getSelBounds();
+  if (mode === 1 || mode === 2) {
+    // Attribute modes store colour per 8-px cell (8×1 in mode 2, 8×8 in mode 1).
+    // Snap the selection to whole cells so copy/move/paste keep colours intact:
+    // a sub-cell selection or paste would split cells and corrupt their ink/paper.
+    const rh = mode === 1 ? 8 : 1;
+    b.x1 = Math.floor(b.x1 / 8) * 8;
+    b.x2 = Math.min(screenW - 1, Math.floor(b.x2 / 8) * 8 + 7);
+    b.y1 = Math.floor(b.y1 / rh) * rh;
+    b.y2 = Math.min(screenH - 1, Math.floor(b.y2 / rh) * rh + (rh - 1));
+    // Keep the on-screen selection rectangle in sync with the snapped region.
+    selX1 = b.x1; selY1 = b.y1; selX2 = b.x2; selY2 = b.y2;
+  }
   const w = b.x2 - b.x1 + 1, h = b.y2 - b.y1 + 1;
   selBuffer = { w, h, data: new Uint8Array(w * h), offX: b.x1, offY: b.y1 };
   for (let y = 0; y < h; y++)
@@ -3176,7 +3231,14 @@ function pasteClipAt(cx, cy) {
   if (!selBuffer) return;
   pushUndo();
   const hw = Math.floor(selBuffer.w / 2), hh = Math.floor(selBuffer.h / 2);
-  const px = cx - hw, py = cy - hh;
+  let px = cx - hw, py = cy - hh;
+  if (mode === 1 || mode === 2) {
+    // Snap to the cell grid so cells line up with the (cell-aligned) source and
+    // pixel bits stay matched to their attribute cell — otherwise colours clash.
+    const rh = mode === 1 ? 8 : 1;
+    px = Math.round(px / 8) * 8;
+    py = Math.round(py / rh) * rh;
+  }
   const maskColor = (selBuffer.maskColor !== undefined) ? selBuffer.maskColor : -1;
   for (let y = 0; y < selBuffer.h; y++)
     for (let x = 0; x < selBuffer.w; x++) {
@@ -3280,7 +3342,12 @@ function drawClipPreview(cx, cy) {
   cctx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
   if (!selBuffer) return;
   const hw = Math.floor(selBuffer.w / 2), hh = Math.floor(selBuffer.h / 2);
-  const px = cx - hw, py = cy - hh;
+  let px = cx - hw, py = cy - hh;
+  if (mode === 1 || mode === 2) {           // match pasteClipAt's cell-grid snap
+    const rh = mode === 1 ? 8 : 1;
+    px = Math.round(px / 8) * 8;
+    py = Math.round(py / rh) * rh;
+  }
   const slots = mode === 3 ? 4 : 16;
   const maskColor = (selBuffer.maskColor !== undefined) ? selBuffer.maskColor : -1;
   for (let y = 0; y < selBuffer.h; y++) {
@@ -4957,10 +5024,24 @@ function importScreen(buf, filename) {
   else if (fname.endsWith('.ss2')) doImport(buf, 2, filename);
   else if (fname.endsWith('.ss3')) doImport(buf, 3, filename);
   else if (fname.endsWith('.ss4')) doImport(buf, 4, filename);
+  else if (fname.endsWith('.ssx')) importSSX(buf, filename);
   else showImportModal(buf, filename);
 }
 
-function showImportModal(buf, filename) {
+// SimCoupe SSX snapshot. Unlike a SAM SCREEN$ it carries a single appended
+// palette (no Palette B, no line interrupts) and — for mode 3 — only 4 palette
+// bytes, and its mode-2 attributes have no 2048-byte padding gap. The mode is
+// identified by the exact file size.
+function importSSX(buf, filename) {
+  const bySize = { 6928: 1, 12304: 2, 24580: 3, 24592: 4 };
+  const mode = bySize[buf.length];
+  if (mode) { doImport(buf, mode, filename, true); return; }
+  // Unknown size (e.g. a RAW 512×192 dynamic SSX, not supported) — let the user
+  // pick a mode manually, still decoded with the SSX palette layout.
+  showImportModal(buf, filename, true);
+}
+
+function showImportModal(buf, filename, ssx = false) {
   // Remove any existing modal
   const old = document.getElementById('import-modal');
   if (old) old.remove();
@@ -5002,14 +5083,14 @@ function showImportModal(buf, filename) {
     </div>`;
   document.body.appendChild(modal);
 
-  document.getElementById('imp-m4').onclick     = () => { modal.remove(); doImport(buf, 4, filename); };
-  document.getElementById('imp-m3').onclick     = () => { modal.remove(); doImport(buf, 3, filename); };
-  document.getElementById('imp-m2').onclick     = () => { modal.remove(); doImport(buf, 2, filename); };
-  document.getElementById('imp-m1').onclick     = () => { modal.remove(); doImport(buf, 1, filename); };
+  document.getElementById('imp-m4').onclick     = () => { modal.remove(); doImport(buf, 4, filename, ssx); };
+  document.getElementById('imp-m3').onclick     = () => { modal.remove(); doImport(buf, 3, filename, ssx); };
+  document.getElementById('imp-m2').onclick     = () => { modal.remove(); doImport(buf, 2, filename, ssx); };
+  document.getElementById('imp-m1').onclick     = () => { modal.remove(); doImport(buf, 1, filename, ssx); };
   document.getElementById('imp-cancel').onclick = () => modal.remove();
 }
 
-function doImport(buf, detectedMode, filename) {
+function doImport(buf, detectedMode, filename, ssx = false) {
   // ── Unpack pixels ─────────────────────────────────────
   const impScreenW = detectedMode === 3 ? 512 : 256;
   const newBuf  = new Uint8Array(512 * 192);
@@ -5061,31 +5142,45 @@ function doImport(buf, detectedMode, filename) {
         }
       }
     }
-    // Attribute data starts at byte 8192 (6144 + 2048 padding)
-    for (let i = 0; i < 6144 && 8192 + i < buf.length; i++) {
-      newAttr[i] = buf[8192 + i];
+    // Attribute data: SAM SCREEN$ keeps 2048 bytes of padding (attr at 8192);
+    // SimCoupe SSX packs the attributes directly after the pixels (attr at 6144).
+    const m2AttrOff = ssx ? 6144 : 8192;
+    for (let i = 0; i < 6144 && m2AttrOff + i < buf.length; i++) {
+      newAttr[i] = buf[m2AttrOff + i];
     }
   }
 
-  // ── Palette offset depends on mode ───────────────────────
-  // Mode 4/3: palOff = 24576; Mode 2: palOff = 14336; Mode 1: palOff = 6912
-  const palOffsets = { 1: 6912, 2: 14336, 3: 24576, 4: 24576 };
-  const palOff = palOffsets[detectedMode];
+  // ── Palette + line interrupts ────────────────────────────
   const newClut = new Uint8Array(16);
   const defaultClut = [0,2,16,18,32,34,48,50,1,3,17,19,33,35,49,51];
   for (let i = 0; i < 16; i++) newClut[i] = defaultClut[i] & 0x7f;
-  if (buf.length > palOff + 16) {
-    for (let i = 0; i < 16; i++) newClut[i] = buf[palOff + i] & 0x7f;
-    for (let i = 0; i < 4; i++)
-      clut3[i] = (palOff + 16 + i < buf.length) ? buf[palOff + 16 + i] & 0x7f : i * 17;
-  }
-
-  // ── Read line interrupts ──────────────────────────────
   const newLI = [];
-  let liOff = palOff + 40;
-  while (liOff + 3 < buf.length && buf[liOff] !== 0xff && newLI.length < SAM_LI_MAX) {
-    newLI.push({ line: buf[liOff], slot: buf[liOff + 1], palIdx: buf[liOff + 2] & 0x7f });
-    liOff += 4;
+
+  if (ssx) {
+    // SimCoupe SSX: pixel data + a single appended palette. No Palette B and
+    // no line interrupts. Mode 3 appends only 4 CLUT bytes (2bpp) — its palette
+    // is the 4-entry clut3; the other modes append 16 bytes into the 16-slot clut.
+    const ssxPalOff = ({ 1: 6912, 2: 12288, 3: 24576, 4: 24576 })[detectedMode];
+    if (detectedMode === 3) {
+      if (buf.length >= ssxPalOff + 4)
+        for (let i = 0; i < 4; i++) clut3[i] = buf[ssxPalOff + i] & 0x7f;
+    } else if (buf.length >= ssxPalOff + 16) {
+      for (let i = 0; i < 16; i++) newClut[i] = buf[ssxPalOff + i] & 0x7f;
+    }
+  } else {
+    // SAM SCREEN$: 16-byte Palette A, 4-byte mode-3 store, then line interrupts.
+    // Mode 4/3: palOff = 24576; Mode 2: palOff = 14336; Mode 1: palOff = 6912.
+    const palOff = ({ 1: 6912, 2: 14336, 3: 24576, 4: 24576 })[detectedMode];
+    if (buf.length > palOff + 16) {
+      for (let i = 0; i < 16; i++) newClut[i] = buf[palOff + i] & 0x7f;
+      for (let i = 0; i < 4; i++)
+        clut3[i] = (palOff + 16 + i < buf.length) ? buf[palOff + 16 + i] & 0x7f : i * 17;
+    }
+    let liOff = palOff + 40;
+    while (liOff + 3 < buf.length && buf[liOff] !== 0xff && newLI.length < SAM_LI_MAX) {
+      newLI.push({ line: buf[liOff], slot: buf[liOff + 1], palIdx: buf[liOff + 2] & 0x7f });
+      liOff += 4;
+    }
   }
 
   // ── Commit atomically then render ─────────────────────
