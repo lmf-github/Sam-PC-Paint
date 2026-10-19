@@ -570,11 +570,13 @@ JS ports those formulas verbatim and reproduces every §5 figure.
   312-line frame, worst lines), and a context-specific **advice** block (`updateScrollAdvice`) that
   explains each highlight present and how to fix it.
 - **Auto-fix (preview-gated, both modes):** the **Fix… (preview)** button runs `scrollFixPreview()`,
-  which applies the fixes to the live buffers over a backup and shows cost/error before→after plus
-  green markers on the changed pixels (`scrollDiffChanged`, drawn in `renderScrollOverlay`).
-  `scrollFixApply()` commits as a single undo step (restore backup → `pushUndo()` → re-apply);
-  `scrollFixCancel()` restores the backup. Changing speed/lines or closing the panel discards a
-  pending preview. The fixes: **M4** (`scrollFixM4`) snaps each odd-x edge byte to an even x by
+  which applies the fixes to the live buffers over a backup, so the canvas **shows the actual fixed
+  artwork** and the panel reports cost/error before→after. The change map (`scrollDiffChanged`) is
+  only tinted when "Highlight changes" is on (`scShowFixChanges`); "Hold: original"
+  (`scrollCompareDown/Up`, buffer swap via `scrollFixedSnapshot`) flips to the unfixed art while held
+  for A/B comparison. `scrollFixApply()` commits as a single undo step (restore backup →
+  `pushUndo()` → re-apply); `scrollFixCancel()` restores the backup. Changing speed/lines or closing
+  the panel discards a pending preview. The fixes: **M4** (`scrollFixM4`) snaps each odd-x edge byte to an even x by
   extending the adjacent run one pixel (decisions read the original row, so no cascade); **M2**
   (`scrollFixM2`) flattens each 3+-colour window to its two commonest colours, repainting the
   minority via `setPixel` over a few passes. Both are lossy by nature — the preview is the safeguard.

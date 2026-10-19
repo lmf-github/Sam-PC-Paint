@@ -289,13 +289,18 @@ flat areas and colour changes **between** lines are free.
 - **Suggestions** — below the summary, a plain-language explanation of exactly which highlights are
   showing on your art and how to correct each one. This is the quickest way to answer "what does
   this mean and how do I fix it?"
-- **Fix… (preview)** — applies automatic fixes to the checked lines and shows a **preview** first:
-  the pixels that would change are tinted green, and the panel reports the cost and error count
-  before → after. Click **Apply** to commit (a single undo step) or **Cancel** to discard. The fixes
-  are: in **Mode 4**, snap odd-x colour edges to the nearest even x (nudging a boundary one pixel);
-  in **Mode 2**, flatten any three-colour window to its two commonest colours (repainting the
-  least-used colour). Both change the artwork, so review the green preview before applying — Cancel
-  if it alters the picture more than you want, and fix those spots by hand instead.
+- **Fix… (preview)** — applies automatic fixes to the checked lines and shows them as a **live
+  preview on the canvas**: you see the actual fixed artwork, and the panel reports the cost and
+  error count before → after. To judge the change:
+  - **Hold: original** — press and hold to flip back to the unfixed picture, release to see the fix
+    again (the quickest way to A/B compare).
+  - **Highlight changes** — tick to tint the pixels the fix touches, so you can spot exactly where.
+  - **Apply** commits (a single undo step) or **Cancel** restores the original.
+
+  The fixes are: in **Mode 4**, snap odd-x colour edges to the nearest even x (nudging a boundary one
+  pixel); in **Mode 2**, flatten any three-colour window to its two commonest colours (repainting the
+  least-used colour). Both change the artwork, so compare before applying — Cancel if it alters the
+  picture more than you want, and fix those spots by hand instead.
 
 The overlay updates live as you draw. General tips: in Mode 4 keep edges on even x and scroll in
 whole bytes (2 or 4 px/frame); in Mode 2 never put three colours within 8 px and change colours

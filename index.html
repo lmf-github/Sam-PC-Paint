@@ -240,6 +240,10 @@ body {
 .sc-advice b { font-weight: 600; }
 .sc-fixbar { flex-direction: column; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border2); }
 .sc-fixbar #sc-fix-msg { font-size: 10px; color: var(--text2); font-family: var(--font-mono); line-height: 1.4; }
+.sc-fix-opts { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sc-fix-opts label { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text2); cursor: pointer; }
+.sc-fix-opts input { margin: 0; cursor: pointer; }
+.sc-fix-opts .btn { font-size: 10px; padding: 2px 8px; }
 .sc-fix-btns { display: flex; gap: 6px; }
 .sc-fix-btns .btn { flex: 1; }
 #sc-fix-btn:disabled { opacity: 0.5; cursor: default; }
@@ -988,6 +992,10 @@ body {
     title="Preview automatic fixes for the checked lines (snap Mode 4 edges to even x; flatten Mode 2 three-colour windows)">Fix… (preview)</button>
   <div class="sc-fixbar" id="sc-fixbar" style="display:none;">
     <div id="sc-fix-msg"></div>
+    <div class="sc-fix-opts">
+      <label title="Tint the pixels that change so you can see where the fix touches"><input type="checkbox" id="sc-fix-hi" onchange="scrollFixHiToggle()"> Highlight changes</label>
+      <button class="btn" id="sc-fix-cmp" onmousedown="scrollCompareDown()" onmouseup="scrollCompareUp()" onmouseleave="scrollCompareUp()" title="Hold to see the original artwork">Hold: original</button>
+    </div>
     <div class="sc-fix-btns">
       <button class="btn success" id="sc-fix-apply" onclick="scrollFixApply()">Apply</button>
       <button class="btn" id="sc-fix-cancel" onclick="scrollFixCancel()">Cancel</button>
@@ -2540,6 +2548,7 @@ let scShowS1 = false, scShowM41 = true, scShowM42 = true, scShowM21 = true, scSh
 // Fix preview state: fixes are applied to the live buffers, with a backup kept so the
 // preview can be cancelled; Apply makes it a single undo step.
 let scrollPreviewActive = false, scrollPreviewChanged = null, scrollFixBackup = null, scrollPreFix = null;
+let scShowFixChanges = false, scrollComparing = false, scrollFixedSnapshot = null;
 
 const scMod = (a, n) => ((a % n) + n) % n;
 
@@ -2748,9 +2757,10 @@ function renderScrollOverlay() {
     }
   }
 
-  // Fix preview: green markers on the pixels the pending fix would change.
-  if (scrollPreviewActive && scrollPreviewChanged) {
-    sctx.fillStyle = 'rgba(60,230,90,0.55)';
+  // Fix preview: the canvas already shows the fixed artwork. Only tint the changed
+  // pixels when the user ticks "Highlight changes", so by default they see the result.
+  if (scrollPreviewActive && scrollPreviewChanged && scShowFixChanges) {
+    sctx.fillStyle = 'rgba(60,230,90,0.4)';
     for (const [x, y] of scrollPreviewChanged) sctx.fillRect(x * z, y * z, z, z);
   }
 }
@@ -2972,11 +2982,32 @@ function scrollFixPreview() {
   const errName = mode === 4 ? 'odd-x' : 'errors';
   document.getElementById('sc-fix-msg').innerHTML =
     `<b>${n}</b> fix(es) · cost ${scFmt(scrollPreFix.total)} → <b>${scFmt(after)}</b> ${unit} · ` +
-    `${errName} ${errBefore} → ${errAfter} · ${scrollPreviewChanged.length} px <span style="color:rgba(60,230,90,1)">■</span>`;
+    `${errName} ${errBefore} → ${errAfter} · ${scrollPreviewChanged.length} px changed.<br>` +
+    `The canvas shows the fixed result — <b>Apply</b> to keep it, or <b>Cancel</b>.`;
   scrollShowFixBar('preview');
+}
+function scrollFixHiToggle() {
+  scShowFixChanges = document.getElementById('sc-fix-hi').checked;
+  renderScrollOverlay();
+}
+// Hold the Compare button to temporarily show the original art under the preview.
+function scrollCompareDown() {
+  if (!scrollPreviewActive || scrollComparing) return;
+  scrollComparing = true;
+  scrollFixedSnapshot = { buf: pixelBuf.slice(), attr: attrBuf.slice() };
+  pixelBuf.set(scrollFixBackup.buf); attrBuf.set(scrollFixBackup.attr);
+  renderFull();
+}
+function scrollCompareUp() {
+  if (!scrollComparing) return;
+  scrollComparing = false;
+  pixelBuf.set(scrollFixedSnapshot.buf); attrBuf.set(scrollFixedSnapshot.attr);
+  scrollFixedSnapshot = null;
+  renderFull();
 }
 function scrollFixApply() {
   if (!scrollPreviewActive) return;
+  if (scrollComparing) scrollCompareUp();            // ensure the fixed art is the live state
   const fixed = { buf: pixelBuf.slice(), attr: attrBuf.slice() };
   pixelBuf.set(scrollFixBackup.buf); attrBuf.set(scrollFixBackup.attr);
   pushUndo();                                        // original state → undo stack (single step)
@@ -2992,6 +3023,7 @@ function scrollFixCancel() {
 }
 function scrollExitPreview() {
   scrollPreviewActive = false; scrollPreviewChanged = null; scrollFixBackup = null; scrollPreFix = null;
+  scrollComparing = false; scrollFixedSnapshot = null;
   scrollShowFixBar('hide');
 }
 function scrollShowFixBar(state) {   // 'hide' | 'preview' | 'msg'
